@@ -19,6 +19,10 @@ Out of the box the tutor is a built-in coach: hints, explanations, vocabulary lo
 
 With an Anthropic API key the tutor becomes a live coach that answers anything in the student's own words, teaches Socratically (it will not reveal an answer the student has not tried), and grades essays against a rubric with a rewritten opening. To turn it on, sign in as the admin, open **Settings → Live AI tutor**, and paste the key. It is stored only on the server in `data/tutor.config.json` (ignored by git) and never sent to browsers. Usage is billed to that key's account. You can also set `ANTHROPIC_API_KEY` in the environment. The default model is `claude-opus-5-5`; override with `TUTOR_MODEL` or the Settings page.
 
+## Use it as an app, on every device
+
+Ascend Prep is an installable web app. On a phone, tablet or computer, open the site and choose **Install app** (on iPhone: Safari → Share → Add to Home Screen). It opens full-screen with its own icon. Sign in with the same username and password on any device; plan, progress, streak and tutor chat live in the account, not on the device. Settings shows how many devices are signed in and can sign out everywhere.
+
 ## What a student gets
 
 | | |

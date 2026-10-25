@@ -95,6 +95,8 @@ route('POST', '/api/login', async ({ req, res, body }) => {
   setSession(req, res, u.id);
   return publicUser(u);
 });
+route('POST', '/api/logout-all', async ({ req, res }) => { const u = requireUser(req); D.run('DELETE FROM sessions WHERE user_id = ?', u.id); res.setHeader('Set-Cookie', 'ascend_session=; Path=/; HttpOnly; Max-Age=0'); return { ok: true }; });
+route('GET', '/api/sessions', async ({ req }) => { const u = requireUser(req); return { count: D.get(`SELECT COUNT(*) AS n FROM sessions WHERE user_id = ? AND expires_at > datetime('now')`, u.id).n }; });
 route('POST', '/api/logout', async ({ req, res }) => { const t = parseCookies(req).ascend_session; if (t) D.run('DELETE FROM sessions WHERE token = ?', t); res.setHeader('Set-Cookie', 'ascend_session=; Path=/; HttpOnly; Max-Age=0'); return { ok: true }; });
 route('GET', '/api/me', async ({ req }) => { const u = currentUser(req); return u ? { user: publicUser(u) } : { user: null }; });
 route('PATCH', '/api/me', async ({ req, body }) => {
