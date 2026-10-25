@@ -1,54 +1,63 @@
-# Ascend Prep — HSPT · SSAT · ISEE tutor
+# Ascend Prep — a personal tutor for the HSPT, SSAT and ISEE
 
-An adaptive, multi-user test-prep web app. Zero dependencies: it runs on Node 22+ using the built-in SQLite module.
+Not a question bank: a tutor. Ascend Prep diagnoses each student, writes a day-by-day study plan to test day, guides every session, gives hints that do not spoil, explains every miss, and brings mistakes back before they are forgotten. Many students can use one site at once; every account's progress is private.
 
 ## Run it
 
 ```bash
+npm install
 node server.js
 ```
 
-Then open http://localhost:3000. To let other devices on your network use it, visit `http://<your-computer's-IP>:3000`.
-Set `PORT=8080` (or any port) to change the port, `DATA_DIR=/path` to move the database.
+Open http://localhost:3000. The **first account created becomes the admin**. Other devices on the same network can use `http://<your-computer's-IP>:3000`. Set `PORT` to change the port, `DATA_DIR` to move the database.
 
-The **first account created becomes the admin** (it can see the account list in Settings). Every account's progress is private; many students can use the site at the same time.
+`npm install` only adds the official Anthropic SDK for the live AI tutor. Everything else is built-in Node 22+ (the database is Node's bundled SQLite).
 
-## What is inside
+## The live AI tutor (optional)
 
-| Area | What it does |
+Out of the box the tutor is a built-in coach: hints, explanations, vocabulary lookups, study-plan advice, pacing and guessing strategy, all without any external service.
+
+With an Anthropic API key the tutor becomes a live coach that answers anything in the student's own words, teaches Socratically (it will not reveal an answer the student has not tried), and grades essays against a rubric with a rewritten opening. To turn it on, sign in as the admin, open **Settings → Live AI tutor**, and paste the key. It is stored only on the server in `data/tutor.config.json` (ignored by git) and never sent to browsers. Usage is billed to that key's account. You can also set `ANTHROPIC_API_KEY` in the environment. The default model is `claude-opus-5-5`; override with `TUTOR_MODEL` or the Settings page.
+
+## What a student gets
+
+| | |
 |---|---|
-| **Accounts** | Username + password (scrypt-hashed), HttpOnly cookie sessions, student / parent roles. A student's share code lets a parent or tutor view their progress read-only. |
-| **Learn** | 46 lessons (verbal, reading, language, writing, math, quant) each built as concept → method → worked think-aloud → scaffolded try → traps → retrieval check → summary. |
-| **Practice** | Adaptive sets. Every skill has an Elo-style rating that updates with each answer, weighted by item difficulty. Sets target ~70% success (desirable difficulty), interleave skills, and favor weak or under-sampled ones. Confidence ratings before each answer train calibration. Answer keys never leave the server. |
-| **Mock tests** | Official section order, counts, and timing for HSPT; SSAT Elementary/Middle/Upper; ISEE Lower/Middle/Upper. Four difficulty tiers (Foundation, Standard, Advanced, Elite) with the tier recommended from the student's ratings. Full, half, or single-section. Per-section timer runs server-side so a closed tab does not stop the clock. SSAT ¼-point guessing penalty applied. Results: per-section and per-skill breakdown, estimated percentile, every question with explanation. |
-| **Review** | SM-2 spaced repetition. Practice misses and vocabulary flashcards return right before they would be forgotten. |
-| **Writing** | Timed SSAT/ISEE prompts with tips and a self-scoring rubric; automatic structural feedback. |
-| **Progress** | Mastery per skill and section, daily accuracy and volume, mock-test history, recommended next steps. Parents pick a linked student from a dropdown. |
+| **Today** | A guided daily session: review, a lesson, a drill, vocabulary, a weekly mock, narrated by the tutor from the plan. |
+| **Diagnostic** | Twenty questions across every section calibrate a rating per skill before the plan is built. |
+| **Study plan** | Day-by-day to the test date (or six weeks by default): weakest skills first, weekly mocks, taper before test day. Rebuilds on demand. |
+| **Lessons** | Forty-six: concept, method, worked think-aloud, scaffolded try, traps, retrieval check. |
+| **Practice** | Adaptive sets with Elo-style skill ratings (about 70% success), a three-level hint ladder, confidence ratings, and "ask why" on every question. |
+| **Mock tests** | Official timing, order and counts for HSPT, SSAT (Elementary/Middle/Upper) and ISEE (Lower/Middle/Upper) at four difficulty tiers. Server-side timers. Full review with explanations. |
+| **Review** | SM-2 spaced repetition of misses and vocabulary flashcards. |
+| **Writing** | Timed prompts, self-scoring rubric, structural feedback; rubric grading and a rewritten opening with the live tutor. |
+| **Progress** | Mastery per skill and section, trends, mock history, badges. Parents see linked students read-only. |
+| **Friends** | Add friends by share code, weekly XP leaderboard, 18 badges, levels. |
 
-Content: 610 curated verbal, reading, and language questions with teaching explanations, 22 reading passages, 220 vocabulary words, 36 writing prompts, plus unlimited procedurally generated math and quantitative items (10 skills × 5 levels) so math sections never repeat.
+Content: 789 curated verbal, reading and language questions with teaching explanations, 22 original passages, 220 vocabulary words, 36 writing prompts, plus unlimited generated math and quantitative items across 10 skills and 5 levels.
 
 ## Project layout
 
 ```
 server.js          HTTP server, auth, JSON API, static files
-db.js              SQLite schema (users, sessions, attempts, ratings, reviews, mock tests…)
-engine.js          adaptive selection, mock assembly, scoring, spaced repetition
+db.js              SQLite schema and migrations
+engine.js          ratings, adaptive selection, mock assembly, scoring, spaced repetition
+coach.js           hints, diagnostic, study plan, XP, badges, friends
+tutor.js           the tutor: live Claude mode and built-in mode
 content/           question banks, lessons, vocabulary, prompts, generators (see SCHEMA.md)
-scripts/validate-content.js   checks every content file against the schema
+scripts/           validate-content.js
 public/            the single-page app (index.html, app.js, styles.css)
-data/              the SQLite database (created on first run)
+data/              database and tutor config (created on first run, git-ignored)
 ```
 
 ## Adding content
 
-Add items to any `content/bank-*.js` or `content/lessons-*.js` following `content/SCHEMA.md`, then run:
+Add to any `content/bank-*.js` or `content/lessons-*.js` following `content/SCHEMA.md`, then run `npm run validate` and restart the server.
 
-```bash
-node scripts/validate-content.js
-```
+## Hosting for friends
 
-Restart the server to load new content.
+The repository holds the code; students need a running server. On one Wi-Fi network, run it on a laptop and share the local address. For use from anywhere, host it on a service that runs a long-lived Node process with a persistent disk (Railway, Fly.io, or any small Linux VPS). Static hosts such as Vercel or Netlify will not keep the database.
 
-## Notes on scoring
+## Notes
 
-Percentiles shown on mock results are estimates derived from percent correct, adjusted for the tier's difficulty. They are a study signal, not an official scaled score.
+Percentiles on mock results are estimates derived from percent correct adjusted for tier. They are a study signal, not an official score.

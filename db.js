@@ -135,3 +135,32 @@ function ensureColumn(table, col, def) {
 }
 ensureColumn('users', 'share_code', 'TEXT');
 ensureColumn('users', 'variant', 'TEXT');
+ensureColumn('users', 'diagnostic_done', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('users', 'tutor_name', 'TEXT');
+ensureColumn('attempts', 'hints', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`
+CREATE TABLE IF NOT EXISTS study_plans (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  plan TEXT NOT NULL,
+  generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS badges (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  badge TEXT NOT NULL,
+  earned_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, badge)
+);
+CREATE TABLE IF NOT EXISTS friends (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  friend_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, friend_id)
+);
+CREATE TABLE IF NOT EXISTS tutor_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`);

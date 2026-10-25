@@ -1,0 +1,9 @@
+{
+  "name": "ascend-prep",
+  "version": "2.0.0",
+  "description": "Adaptive HSPT, SSAT and ISEE tutor with a live AI coach",
+  "main": "server.js",
+  "scripts": { "start": "node server.js", "validate": "node scripts/validate-content.js" },
+  "dependencies": { "@anthropic-ai/sdk": "^1.3.0" },
+  "engines": { "node": ">=22" }
+}

@@ -241,10 +241,10 @@ function scheduleReview(userId, key, kind, payload, wrong = true) {
 }
 
 // Record an attempt and update everything that depends on it.
-function recordAttempt(user, q, choice, { seconds, confidence, mode, mockId, test } = {}) {
+function recordAttempt(user, q, choice, { seconds, confidence, mode, mockId, test, hints } = {}) {
   const correct = Number.isInteger(choice) && choice === q.answer;
   const t = test || (q.test === 'all' ? user.target_test : q.test);
-  D.run('INSERT INTO attempts (user_id, question_id, test, section, skill, level, correct, choice, seconds, confidence, mode, mock_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', user.id, q.id, t, q.section || 'misc', q.skill, q.level || 3, correct ? 1 : 0, Number.isInteger(choice) ? choice : null, seconds || null, confidence || null, mode || 'practice', mockId || null);
+  D.run('INSERT INTO attempts (user_id, question_id, test, section, skill, level, correct, choice, seconds, confidence, mode, mock_id, hints) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', user.id, q.id, t, q.section || 'misc', q.skill, q.level || 3, correct ? 1 : 0, Number.isInteger(choice) ? choice : null, seconds || null, confidence || null, mode || 'practice', mockId || null, Number(hints) || 0);
   const rating = updateRating(user.id, t, q.skill, q.level || 3, correct);
   if (!correct && !q.generated && mode !== 'review') scheduleReview(user.id, `q:${q.id}`, 'question', { id: q.id }, true);
   if (!correct && q.generated && mode !== 'review') scheduleReview(user.id, `g:${q.id}`, 'question', { full: q }, true);
@@ -260,20 +260,21 @@ function progressSummary(user) {
     const rows = skills.filter(s => list.includes(s.skill));
     bySection[sec] = { name: C.TESTS[test].sections[sec], skills: list.filter(s => s !== 'writing').map(s => skills.find(x => x.skill === s) || { skill: s, name: C.SKILL_NAMES[s], rating: null, n: 0, mastery: null }), mastery: rows.length ? Math.round(rows.reduce((a, b) => a + b.mastery, 0) / rows.length) : null };
   }
-  const daily = D.all(`SELECT date(created_at) AS day, COUNT(*) AS n, SUM(correct) AS right, SUM(COALESCE(seconds,0)) AS secs FROM attempts WHERE user_id = ? AND created_at > datetime('now','-60 days') GROUP BY day ORDER BY day`, user.id);
+  const daily = D.all(`SELECT date(created_at,'localtime') AS day, COUNT(*) AS n, SUM(correct) AS right, SUM(COALESCE(seconds,0)) AS secs FROM attempts WHERE user_id = ? AND created_at > datetime('now','-60 days') GROUP BY day ORDER BY day`, user.id);
   const totals = D.get('SELECT COUNT(*) AS n, SUM(correct) AS right, SUM(COALESCE(seconds,0)) AS secs FROM attempts WHERE user_id = ?', user.id);
   const recent = D.get(`SELECT COUNT(*) AS n, SUM(correct) AS right FROM attempts WHERE user_id = ? AND created_at > datetime('now','-7 days')`, user.id);
-  const today = D.get(`SELECT COUNT(*) AS n FROM attempts WHERE user_id = ? AND date(created_at) = date('now')`, user.id);
+  const today = D.get(`SELECT COUNT(*) AS n FROM attempts WHERE user_id = ? AND date(created_at,'localtime') = date('now','localtime')`, user.id);
   // streak of consecutive days with activity
   const days = new Set(daily.map(d => d.day)); let streak = 0; const d = new Date();
-  for (let i = 0; i < 400; i++) { const key = d.toISOString().slice(0, 10); if (days.has(key)) streak++; else if (i > 0) break; d.setDate(d.getDate() - 1); }
+  const localKey = (x) => new Date(x.getTime() - x.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  for (let i = 0; i < 400; i++) { const key = localKey(d); if (days.has(key)) streak++; else if (i > 0) break; d.setDate(d.getDate() - 1); }
   const due = D.get(`SELECT COUNT(*) AS n FROM review_items WHERE user_id = ? AND due_at <= datetime('now')`, user.id).n;
   const mocks = D.all('SELECT id, test, variant, tier, length, status, results, started_at, completed_at FROM mock_tests WHERE user_id = ? ORDER BY started_at DESC LIMIT 20', user.id).map(m => ({ ...m, results: m.results ? (({ pct, percentile, raw, totalRight, totalCount, sections }) => ({ pct, percentile, raw, totalRight, totalCount, sections: sections.map(s => ({ label: s.label, pct: s.pct, percentile: s.percentile, right: s.right, count: s.count, writing: s.writing })) }))(JSON.parse(m.results)) : null }));
   const lessonsDone = D.all('SELECT lesson_id, status, score FROM lesson_progress WHERE user_id = ?', user.id);
   // Recommendations
   const recs = [];
   if (due > 0) recs.push({ type: 'review', title: `Review ${due} due item${due > 1 ? 's' : ''}`, why: 'Spaced retrieval of recent misses is the highest-return 10 minutes you can spend.', action: { page: 'review' } });
-  const weak = skills.filter(s => s.n >= 4).sort((a, b) => a.mastery - b.mastery).slice(0, 2);
+  const weak = skills.filter(s => s.n >= 2).sort((a, b) => a.mastery - b.mastery).slice(0, 2);
   for (const w of weak) {
     const lesson = C.lessons.find(l => l.skill === w.skill && (l.test === test || l.test === 'all') && !lessonsDone.find(x => x.lesson_id === l.id && x.status === 'completed'));
     if (lesson) recs.push({ type: 'lesson', title: `Lesson: ${lesson.title}`, why: `${w.name} is your weakest area (est. ${w.mastery}% on test-level items).`, action: { page: 'lesson', id: lesson.id } });
@@ -285,4 +286,4 @@ function progressSummary(user) {
   return { test, skills, bySection, daily, totals, recent, today: today.n, streak, due, mocks, lessonsDone, recommendations: recs.slice(0, 4), tierRecommendation: recommendTier(user.id, test) };
 }
 
-module.exports = { practiceBatch, buildMock, scoreMock, recordAttempt, progressSummary, sm2, scheduleReview, getRatings, mastery, recommendTier, targetLevel, LEVEL_RATING };
+module.exports = { _makeQuestion: makeQuestion, practiceBatch, buildMock, scoreMock, recordAttempt, progressSummary, sm2, scheduleReview, getRatings, mastery, recommendTier, targetLevel, LEVEL_RATING };

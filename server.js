@@ -8,6 +8,8 @@ const url = require('url');
 const D = require('./db');
 const C = require('./content');
 const E = require('./engine');
+const K = require('./coach');
+const T = require('./tutor');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -30,7 +32,7 @@ const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,24}$/;
 const authHits = new Map();
 function rateLimit(ip) { const t = Date.now(); const arr = (authHits.get(ip) || []).filter(x => t - x < 15 * 60e3); arr.push(t); authHits.set(ip, arr); if (arr.length > 40) throw new HttpError(429, 'Too many attempts. Try again in a few minutes.'); }
 
-function publicUser(u) { return { id: u.id, username: u.username, displayName: u.display_name, role: u.role, targetTest: u.target_test, variant: u.variant || Object.keys(C.TESTS[u.target_test].variants)[0], grade: u.grade, testDate: u.test_date, dailyGoal: u.daily_goal, shareCode: u.share_code, createdAt: u.created_at }; }
+function publicUser(u) { const xp = K.xpFor(u.id); const level = K.levelFor(xp); return { id: u.id, username: u.username, displayName: u.display_name, role: u.role, targetTest: u.target_test, variant: u.variant || Object.keys(C.TESTS[u.target_test].variants)[0], grade: u.grade, testDate: u.test_date, dailyGoal: u.daily_goal, shareCode: u.share_code, createdAt: u.created_at, diagnosticDone: Boolean(u.diagnostic_done), tutorName: T.tutorName(u), xp, level, levelXp: K.xpForLevel(level), nextLevelXp: K.xpForLevel(level + 1) }; }
 function currentUser(req) {
   const token = parseCookies(req).ascend_session; if (!token) return null;
   const s = D.get('SELECT user_id, expires_at FROM sessions WHERE token = ?', token);
@@ -95,6 +97,7 @@ route('PATCH', '/api/me', async ({ req, body }) => {
   const targetTest = C.TESTS[body.targetTest] ? body.targetTest : u.target_test;
   const variant = C.TESTS[targetTest].variants[body.variant] ? body.variant : (targetTest === u.target_test ? u.variant : Object.keys(C.TESTS[targetTest].variants)[0]);
   D.run('UPDATE users SET display_name = ?, target_test = ?, variant = ?, grade = ?, test_date = ?, daily_goal = ? WHERE id = ?', String(body.displayName || u.display_name).trim().slice(0, 40) || u.display_name, targetTest, variant, body.grade ? Number(body.grade) : u.grade, body.testDate || null, Math.max(5, Math.min(200, Number(body.dailyGoal) || u.daily_goal)), u.id);
+  if (body.tutorName !== undefined) D.run('UPDATE users SET tutor_name = ? WHERE id = ?', String(body.tutorName || '').trim().slice(0, 30) || null, u.id);
   if (body.newPassword) { if (String(body.newPassword).length < 8) throw new HttpError(400, 'New password must be at least 8 characters.'); const salt = crypto.randomBytes(16).toString('hex'); D.run('UPDATE users SET password_hash = ?, salt = ? WHERE id = ?', hashPassword(String(body.newPassword), salt), salt, u.id); }
   return publicUser(D.get('SELECT * FROM users WHERE id = ?', u.id));
 });
@@ -142,7 +145,8 @@ route('POST', '/api/lessons/:id/check', async ({ req, params, body }) => {
   });
   const score = results.length ? results.filter(r => r.correct).length / results.length : 1;
   D.run(`INSERT INTO lesson_progress (user_id, lesson_id, status, score, completed_at) VALUES (?, ?, 'completed', ?, datetime('now')) ON CONFLICT(user_id, lesson_id) DO UPDATE SET status='completed', score=excluded.score, completed_at=datetime('now')`, u.id, l.id, score);
-  return { results, score };
+  const plan = K.getPlan(u); if (plan) { const day = plan.days.find(d => d.date === K.todayKey()); if (day) { const it = day.items.find(i => i.type === 'lesson' && i.ref === l.id && !i.done); if (it) { it.done = true; K.savePlan(u, plan); } } }
+  return { results, score, newBadges: K.checkBadges(u) };
 });
 route('POST', '/api/lessons/:id/start', async ({ req, params }) => { const u = requireUser(req); D.run(`INSERT OR IGNORE INTO lesson_progress (user_id, lesson_id, status) VALUES (?, ?, 'started')`, u.id, params.id); return { ok: true }; });
 
@@ -150,8 +154,9 @@ route('POST', '/api/lessons/:id/start', async ({ req, params }) => { const u = r
 route('GET', '/api/practice/next', async ({ req, query }) => {
   const u = requireUser(req);
   const count = Math.max(1, Math.min(30, Number(query.count) || 10));
-  const batch = E.practiceBatch(u, { test: query.test || u.target_test, section: query.section || undefined, skill: query.skill || undefined, count, level: query.level ? Number(query.level) : undefined });
-  const served = batch.map(q => { const sid = crypto.randomBytes(8).toString('hex'); D.run('INSERT INTO served (id, user_id, payload, mode) VALUES (?, ?, ?, ?)', sid, u.id, JSON.stringify({ ...q, passage: undefined }), 'practice'); return { ...stripAnswer(q), servedId: sid }; });
+  const diagnostic = query.mode === 'diagnostic';
+  const batch = diagnostic ? K.diagnosticBatch(u) : E.practiceBatch(u, { test: query.test || u.target_test, section: query.section || undefined, skill: query.skill || undefined, count, level: query.level ? Number(query.level) : undefined });
+  const served = batch.map(q => { const sid = crypto.randomBytes(8).toString('hex'); D.run('INSERT INTO served (id, user_id, payload, mode) VALUES (?, ?, ?, ?)', sid, u.id, JSON.stringify({ ...q, passage: undefined, hints: 0 }), diagnostic ? 'diagnostic' : 'practice'); return { ...stripAnswer(q), servedId: sid }; });
   D.run(`DELETE FROM served WHERE created_at < datetime('now','-2 days')`);
   return { questions: served };
 });
@@ -160,10 +165,14 @@ route('POST', '/api/practice/answer', async ({ req, body }) => {
   const row = D.get('SELECT payload, mode FROM served WHERE id = ? AND user_id = ?', String(body.servedId || ''), u.id);
   if (!row) throw new HttpError(404, 'Question expired. Load a new set.');
   const q = JSON.parse(row.payload);
+  if (q.answered) throw new HttpError(400, 'Already answered.');
   const choice = Number.isInteger(body.choice) ? body.choice : null;
-  const r = E.recordAttempt(u, q, choice, { seconds: Number(body.seconds) || null, confidence: Number(body.confidence) || null, mode: row.mode, test: body.test && C.TESTS[body.test] ? body.test : undefined });
-  D.run('DELETE FROM served WHERE id = ?', body.servedId);
-  return { correct: r.correct, answer: q.answer, explanation: q.explanation, rating: { delta: Math.round(r.rating.delta), after: Math.round(r.rating.after), mastery: E.mastery(r.rating.after) }, skill: q.skill, skillName: C.SKILL_NAMES[q.skill] };
+  const hints = Number(q.hints) || 0;
+  const r = E.recordAttempt(u, q, choice, { seconds: Number(body.seconds) || null, confidence: Number(body.confidence) || null, mode: row.mode, test: body.test && C.TESTS[body.test] ? body.test : undefined, hints });
+  D.run('UPDATE served SET payload = ? WHERE id = ?', JSON.stringify({ ...q, answered: true, choice }), body.servedId);
+  const xpGain = r.correct ? 10 + (q.level || 3) * 4 - Math.min(hints, 2) * 3 : 2;
+  const newBadges = K.checkBadges(u);
+  return { correct: r.correct, answer: q.answer, explanation: q.explanation, rating: { delta: Math.round(r.rating.delta), after: Math.round(r.rating.after), mastery: E.mastery(r.rating.after) }, skill: q.skill, skillName: C.SKILL_NAMES[q.skill], xpGain, newBadges };
 });
 
 // Mock tests
@@ -218,7 +227,8 @@ function finishMock(u, m) {
     const w = m.bp.sections.find(s => s.writing); if (w && m.resp[`w:${w.section}`]) { const text = m.resp[`w:${w.section}`]; D.run('INSERT INTO writing_submissions (user_id, prompt_id, text, word_count, minutes) VALUES (?, ?, ?, ?, ?)', u.id, (w.prompt && w.prompt.id) || 'mock', text, text.trim().split(/\s+/).filter(Boolean).length, w.minutes); }
     D.run(`UPDATE mock_tests SET status = 'completed', results = ?, completed_at = datetime('now') WHERE id = ?`, JSON.stringify(results), m.id);
   });
-  return { id: m.id, status: 'completed', results };
+  K.markDone(u, K.todayKey(), null, 'mock');
+  return { id: m.id, status: 'completed', results, newBadges: K.checkBadges(u) };
 }
 route('POST', '/api/mock/:id/submit', async ({ req, params }) => { const u = requireUser(req); const m = loadMock(u, params.id); if (m.status !== 'in_progress') throw new HttpError(400, 'Already submitted'); return finishMock(u, m); });
 route('POST', '/api/mock/:id/abandon', async ({ req, params }) => { const u = requireUser(req); const m = loadMock(u, params.id); D.run(`UPDATE mock_tests SET status = 'abandoned' WHERE id = ? AND status = 'in_progress'`, m.id); return { ok: true }; });
@@ -283,7 +293,10 @@ route('POST', '/api/writing/submit', async ({ req, body }) => {
   if (weak > 3) tips.push(`You used vague words (very, really, thing, good, got) ${weak} times. Replace each with a precise word or a specific detail.`);
   if (longWords / Math.max(1, wc) < 0.06) tips.push('Work in a few precise, mature vocabulary words you fully control. Precision beats length.');
   if (!tips.length) tips.push('Strong structure and control. Now sharpen the opening: start with a specific image, moment, or claim rather than restating the prompt.');
-  return { id: Number(r.lastInsertRowid), wordCount: wc, sentences: sentences.length, paragraphs: paras, avgSentenceLength: Math.round(avgLen * 10) / 10, tips };
+  const promptObj = C.writingPrompts.find(p => p.id === body.promptId);
+  const ai = await T.essayFeedback(u, promptObj ? promptObj.prompt : String(body.promptText || 'Open prompt'), text);
+  K.markDone(u, K.todayKey(), null, 'writing');
+  return { id: Number(r.lastInsertRowid), wordCount: wc, sentences: sentences.length, paragraphs: paras, avgSentenceLength: Math.round(avgLen * 10) / 10, tips, ai, newBadges: K.checkBadges(u) };
 });
 route('GET', '/api/writing/mine', async ({ req, query }) => { const u = requireUser(req); const target = viewTarget(req, u, query); return { submissions: D.all('SELECT id, prompt_id AS promptId, text, word_count AS wordCount, minutes, self_scores AS selfScores, created_at AS createdAt FROM writing_submissions WHERE user_id = ? ORDER BY created_at DESC LIMIT 30', target.id) }; });
 
@@ -293,6 +306,67 @@ route('GET', '/api/progress/attempts', async ({ req, query }) => { const u = req
 
 // Admin: list users (first registered account is admin)
 route('GET', '/api/admin/users', async ({ req }) => { const u = requireUser(req); if (u.role !== 'admin') throw new HttpError(403, 'Admins only'); return { users: D.all(`SELECT u.id, u.username, u.display_name AS displayName, u.role, u.target_test AS targetTest, u.created_at AS createdAt, (SELECT COUNT(*) FROM attempts a WHERE a.user_id = u.id) AS attempts, (SELECT MAX(created_at) FROM attempts a WHERE a.user_id = u.id) AS lastActive FROM users u ORDER BY u.created_at`) }; });
+
+// ---------- Tutor, hints, diagnostic, plan, session, gamification, friends ----------
+route('GET', '/api/tutor/status', async ({ req }) => { requireUser(req); const s = T.status(); return { live: s.live, model: s.model, note: s.note, sdkInstalled: s.sdkInstalled, hasKey: s.hasKey }; });
+route('GET', '/api/tutor/history', async ({ req }) => { const u = requireUser(req); return { messages: D.all('SELECT role, content, created_at AS at FROM tutor_messages WHERE user_id = ? ORDER BY id DESC LIMIT 40', u.id).reverse() }; });
+route('DELETE', '/api/tutor/history', async ({ req }) => { const u = requireUser(req); D.run('DELETE FROM tutor_messages WHERE user_id = ?', u.id); return { ok: true }; });
+route('POST', '/api/tutor/chat', async ({ req, body }) => {
+  const u = requireUser(req);
+  const ctx = body.context && typeof body.context === 'object' ? body.context : {};
+  try { const out = await T.chat(u, body.message, ctx); if (out.hint && ctx.servedId) { const row = D.get('SELECT payload FROM served WHERE id = ? AND user_id = ?', String(ctx.servedId), u.id); if (row) { const q = JSON.parse(row.payload); q.hints = Math.max(q.hints || 0, out.hint.level); D.run('UPDATE served SET payload = ? WHERE id = ?', JSON.stringify(q), ctx.servedId); } } return out; }
+  catch (e) { throw new HttpError(400, e.message); }
+});
+route('POST', '/api/admin/tutor-config', async ({ req, body }) => {
+  const u = requireUser(req); if (u.role !== 'admin') throw new HttpError(403, 'Admins only');
+  const cfg = T.readConfig();
+  if (body.apiKey !== undefined) { const k = String(body.apiKey || '').trim(); if (k && !/^sk-ant-/.test(k)) throw new HttpError(400, 'That does not look like an Anthropic API key (it should start with sk-ant-).'); if (k) cfg.apiKey = k; else delete cfg.apiKey; }
+  if (body.model !== undefined) { const m = String(body.model || '').trim(); if (m) cfg.model = m; else delete cfg.model; }
+  T.writeConfig(cfg);
+  return T.status();
+});
+route('GET', '/api/practice/hint', async ({ req, query }) => {
+  const u = requireUser(req);
+  const row = D.get('SELECT payload, mode FROM served WHERE id = ? AND user_id = ?', String(query.servedId || ''), u.id);
+  if (!row) throw new HttpError(404, 'Question expired.');
+  const q = JSON.parse(row.payload); const level = Math.max(1, Math.min(3, (Number(q.hints) || 0) + 1));
+  q.hints = level; D.run('UPDATE served SET payload = ? WHERE id = ?', JSON.stringify(q), query.servedId);
+  return { ...K.hintFor(q, level), hintsUsed: level };
+});
+route('POST', '/api/diagnostic/complete', async ({ req }) => {
+  const u = requireUser(req);
+  D.run('UPDATE users SET diagnostic_done = 1 WHERE id = ?', u.id); u.diagnostic_done = 1;
+  const plan = K.savePlan(u, K.buildPlan(u));
+  const p = E.progressSummary(u);
+  return { plan, progress: p, newBadges: K.checkBadges(u) };
+});
+route('GET', '/api/plan', async ({ req, query }) => { const u = requireUser(req); const target = viewTarget(req, u, query); return { plan: K.getPlan(target), today: K.todayKey() }; });
+route('POST', '/api/plan/generate', async ({ req }) => { const u = requireUser(req); return { plan: K.savePlan(u, K.buildPlan(u)), today: K.todayKey() }; });
+route('POST', '/api/plan/done', async ({ req, body }) => { const u = requireUser(req); return { plan: K.markDone(u, String(body.date || K.todayKey()), Number.isInteger(body.index) ? body.index : null, body.type || null) }; });
+route('GET', '/api/session/today', async ({ req }) => {
+  const u = requireUser(req);
+  let plan = K.getPlan(u); if (!plan) plan = K.savePlan(u, K.buildPlan(u));
+  const today = K.todayKey(); let day = plan.days.find(d => d.date === today);
+  if (!day) { plan = K.savePlan(u, K.buildPlan(u)); day = plan.days.find(d => d.date === today) || plan.days[0]; }
+  const p = E.progressSummary(u);
+  const done = day.items.filter(i => i.done).length;
+  const minutes = day.items.reduce((a, i) => a + (i.minutes || 0), 0);
+  const weak = p.skills.filter(s => s.n >= 2).sort((a, b) => a.mastery - b.mastery)[0];
+  const daysLeft = plan.testDate ? Math.ceil((new Date(plan.testDate) - Date.now()) / 864e5) : null;
+  const narration = !u.diagnostic_done ? `Welcome, ${u.display_name}. Before anything else, I want to see how you think. The diagnostic is twenty questions across every section; there is no score to worry about. It tells me where to start.` : done === day.items.length ? `That is everything for today, ${u.display_name}. ${p.streak} day streak. Rest is part of the plan; I will see you tomorrow.` : `${p.streak >= 3 ? `Day ${p.streak} in a row. ` : ''}Today is about ${minutes} minutes${daysLeft ? `, with ${daysLeft} days to the test` : ''}. ${weak ? `We are chasing ${weak.name}; it is sitting at ${weak.mastery}% and it is where your next points are.` : 'Your plan starts broad and narrows as I learn what you need.'} ${p.due ? `Start with the ${p.due} review items; they are timed to land before you forget.` : 'Begin with the first step below.'}`;
+  return { date: day.date, items: day.items, done, total: day.items.length, minutes, narration, tutorName: T.tutorName(u), streak: p.streak, due: p.due, daysLeft, diagnosticDone: Boolean(u.diagnostic_done) };
+});
+route('GET', '/api/gamification', async ({ req, query }) => { const u = requireUser(req); const target = viewTarget(req, u, query); const xp = K.xpFor(target.id); const level = K.levelFor(xp); return { xp, level, levelXp: K.xpForLevel(level), nextLevelXp: K.xpForLevel(level + 1), weekXp: K.xpSince(target.id, 7), badges: K.badgeList(target), newBadges: target.id === u.id ? K.checkBadges(u) : [] }; });
+route('GET', '/api/friends', async ({ req }) => { const u = requireUser(req); return { friends: D.all('SELECT u.id, u.display_name AS displayName, u.username, u.target_test AS targetTest FROM friends f JOIN users u ON u.id = f.friend_id WHERE f.user_id = ?', u.id), leaderboard: K.leaderboard(u) }; });
+route('POST', '/api/friends/add', async ({ req, body }) => {
+  const u = requireUser(req);
+  const f = D.get('SELECT * FROM users WHERE share_code = ?', String(body.code || '').trim().toUpperCase());
+  if (!f) throw new HttpError(404, 'No one has that code. Ask your friend for the code shown in their Settings.');
+  if (f.id === u.id) throw new HttpError(400, 'That is your own code.');
+  D.run('INSERT OR IGNORE INTO friends (user_id, friend_id) VALUES (?, ?)', u.id, f.id); D.run('INSERT OR IGNORE INTO friends (user_id, friend_id) VALUES (?, ?)', f.id, u.id);
+  return { ok: true, friend: { id: f.id, displayName: f.display_name, username: f.username }, newBadges: K.checkBadges(u) };
+});
+route('DELETE', '/api/friends/:id', async ({ req, params }) => { const u = requireUser(req); D.run('DELETE FROM friends WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)', u.id, Number(params.id), Number(params.id), u.id); return { ok: true }; });
 
 // ---------- server ----------
 function serveStatic(req, res, pathname) {
