@@ -56,7 +56,7 @@ Add to any `content/bank-*.js` or `content/lessons-*.js` following `content/SCHE
 
 ## Hosting for friends
 
-The repository holds the code; students need a running server. On one Wi-Fi network, run it on a laptop and share the local address. For use from anywhere, host it on a service that runs a long-lived Node process with a persistent disk (Railway, Fly.io, or any small Linux VPS). Static hosts such as Vercel or Netlify will not keep the database.
+The repository holds the code; students need a running server. On one Wi-Fi network, run it on a laptop and share the local address. For use from anywhere, see [DEPLOY.md](DEPLOY.md): the repo ships a `Dockerfile`, `railway.json` and `fly.toml`, and deploys to Railway in about five clicks.
 
 ## Notes
 

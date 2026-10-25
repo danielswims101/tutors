@@ -20,6 +20,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 // ---------- helpers ----------
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 const json = (res, status, body) => { const s = JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(s), 'Cache-Control': 'no-store' }); res.end(s); };
+const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'strict-origin-when-cross-origin' };
 function parseCookies(req) { const out = {}; (req.headers.cookie || '').split(';').forEach(p => { const i = p.indexOf('='); if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim()); }); return out; }
 function readBody(req) { return new Promise((resolve, reject) => { let data = ''; req.on('data', c => { data += c; if (data.length > 2e6) { reject(new HttpError(413, 'Body too large')); req.destroy(); } }); req.on('end', () => { if (!data) return resolve({}); try { resolve(JSON.parse(data)); } catch { reject(new HttpError(400, 'Invalid JSON')); } }); req.on('error', reject); }); }
 const hashPassword = (pw, salt) => crypto.scryptSync(pw, salt, 64).toString('hex');
@@ -42,10 +43,12 @@ function currentUser(req) {
   return u;
 }
 function requireUser(req) { const u = currentUser(req); if (!u) throw new HttpError(401, 'Please sign in.'); return u; }
-function setSession(res, userId) {
+const isSecure = (req) => req.socket.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
+function setSession(req, res, userId) {
   const token = crypto.randomBytes(32).toString('hex');
   D.run('INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)', token, userId, plusDays(SESSION_DAYS));
-  res.setHeader('Set-Cookie', `ascend_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}`);
+  res.setHeader('Set-Cookie', `ascend_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 86400}${isSecure(req) ? '; Secure' : ''}`);
 }
 function viewTarget(req, user, query) {
   // Parents / admins may view a linked student's data via ?student=ID
@@ -62,9 +65,11 @@ function viewTarget(req, user, query) {
 const routes = [];
 const route = (method, pattern, handler) => routes.push({ method, re: new RegExp('^' + pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '/?$'), handler });
 
+route('GET', '/api/health', async () => ({ ok: true, content: C.questions.length, uptime: Math.round(process.uptime()) }));
+
 // Auth
 route('POST', '/api/register', async ({ req, res, body }) => {
-  rateLimit(req.socket.remoteAddress);
+  rateLimit(clientIp(req));
   const username = String(body.username || '').trim().toLowerCase();
   const displayName = String(body.displayName || '').trim().slice(0, 40);
   const password = String(body.password || '');
@@ -78,16 +83,16 @@ route('POST', '/api/register', async ({ req, res, body }) => {
   const salt = crypto.randomBytes(16).toString('hex');
   const count = D.get('SELECT COUNT(*) AS n FROM users').n;
   const r = D.run('INSERT INTO users (username, display_name, password_hash, salt, role, target_test, variant, grade, share_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', username, displayName, hashPassword(password, salt), salt, count === 0 ? 'admin' : role, targetTest, variant, body.grade ? Number(body.grade) : null, crypto.randomBytes(3).toString('hex').toUpperCase());
-  setSession(res, Number(r.lastInsertRowid));
+  setSession(req, res, Number(r.lastInsertRowid));
   return publicUser(D.get('SELECT * FROM users WHERE id = ?', Number(r.lastInsertRowid)));
 });
 route('POST', '/api/login', async ({ req, res, body }) => {
-  rateLimit(req.socket.remoteAddress);
+  rateLimit(clientIp(req));
   const u = D.get('SELECT * FROM users WHERE username = ?', String(body.username || '').trim().toLowerCase());
   if (!u) throw new HttpError(401, 'Incorrect username or password.');
   const h = Buffer.from(hashPassword(String(body.password || ''), u.salt)); const stored = Buffer.from(u.password_hash);
   if (h.length !== stored.length || !crypto.timingSafeEqual(h, stored)) throw new HttpError(401, 'Incorrect username or password.');
-  setSession(res, u.id);
+  setSession(req, res, u.id);
   return publicUser(u);
 });
 route('POST', '/api/logout', async ({ req, res }) => { const t = parseCookies(req).ascend_session; if (t) D.run('DELETE FROM sessions WHERE token = ?', t); res.setHeader('Set-Cookie', 'ascend_session=; Path=/; HttpOnly; Max-Age=0'); return { ok: true }; });
@@ -383,6 +388,7 @@ function serveStatic(req, res, pathname) {
 }
 const server = http.createServer(async (req, res) => {
   const { pathname, query } = url.parse(req.url, true);
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
   if (!pathname.startsWith('/api/')) return serveStatic(req, res, pathname);
   try {
     for (const r of routes) {
@@ -398,4 +404,5 @@ const server = http.createServer(async (req, res) => {
     console.error(e); json(res, 500, { error: 'Server error' });
   }
 });
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { console.log(`${sig} received, shutting down`); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000); });
 server.listen(PORT, HOST, () => { console.log(`Ascend Prep running at http://localhost:${PORT}  (content: ${C.questions.length} questions, ${C.passages.length} passages, ${C.lessons.length} lessons, ${C.vocab.length} vocab words)`); });
