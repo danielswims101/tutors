@@ -2,22 +2,26 @@
 
 Not a question bank: a tutor. Ascend Prep diagnoses each student, writes a day-by-day study plan to test day, guides every session, gives hints that do not spoil, explains every miss, and brings mistakes back before they are forgotten. Many students can use one site at once; every account's progress is private.
 
-## Run it
+## Use it
+
+It is live at **https://danielswims101.github.io/tutors/** and free to use. Create an account (username and password, no email needed), take the 20-question diagnostic, and your tutor builds the plan. The first account created is the admin.
+
+Hosting is free: the site is static on GitHub Pages and accounts live in Supabase's free tier. See [DEPLOY.md](DEPLOY.md) for how it fits together and how to update it.
+
+### Running the code yourself
 
 ```bash
-npm install
-node server.js
+node scripts/build-pages.js    # bundle content for the browser (after content changes)
+node scripts/serve-docs.js     # preview the static site at http://localhost:8080
 ```
 
-Open http://localhost:3000. The **first account created becomes the admin**. Other devices on the same network can use `http://<your-computer's-IP>:3000`. Set `PORT` to change the port, `DATA_DIR` to move the database.
-
-`npm install` only adds the official Anthropic SDK for the live AI tutor. Everything else is built-in Node 22+ (the database is Node's bundled SQLite).
+Without Supabase configuration in `docs/config.js`, the site runs in a preview mode where accounts live in the browser only.
 
 ## The live AI tutor (optional)
 
-Out of the box the tutor is a built-in coach: hints, explanations, vocabulary lookups, study-plan advice, pacing and guessing strategy, all without any external service.
+Out of the box the tutor is a built-in coach: hints, explanations, vocabulary lookups, study-plan advice, pacing and guessing strategy.
 
-With an Anthropic API key the tutor becomes a live coach that answers anything in the student's own words, teaches Socratically (it will not reveal an answer the student has not tried), and grades essays against a rubric with a rewritten opening. To turn it on, sign in as the admin, open **Settings → Live AI tutor**, and paste the key. It is stored only on the server in `data/tutor.config.json` (ignored by git) and never sent to browsers. Usage is billed to that key's account. You can also set `ANTHROPIC_API_KEY` in the environment. The default model is `claude-opus-5-5`; override with `TUTOR_MODEL` or the Settings page.
+With an Anthropic API key the tutor becomes a live coach that answers anything in the student's own words, teaches Socratically (it will not reveal an answer the student has not tried), and grades essays against a rubric with a rewritten opening. The admin pastes the key under **Settings → Live AI tutor**. It is stored in the Supabase database where only the tutor function can read it, and usage is billed to that key's account at the default model `claude-opus-5-5`.
 
 ## Use it as an app, on every device
 
@@ -43,24 +47,21 @@ Content: 789 curated verbal, reading and language questions with teaching explan
 ## Project layout
 
 ```
-server.js          HTTP server, auth, JSON API, static files
-db.js              SQLite schema and migrations
-engine.js          ratings, adaptive selection, mock assembly, scoring, spaced repetition
-coach.js           hints, diagnostic, study plan, XP, badges, friends
-tutor.js           the tutor: live Claude mode and built-in mode
+docs/              the published site (GitHub Pages)
+  app.js           the user interface
+  api.js           the "server in the browser": every action the UI takes
+  engine.js        ratings, adaptive selection, mock assembly, scoring, spaced repetition, plan, badges, built-in tutor
+  store.js         data layer: Supabase (accounts on every device) or local preview mode
+  content.js       generated bundle of all questions, lessons, vocabulary and math generators
+  config.js        Supabase URL and publishable key
 content/           question banks, lessons, vocabulary, prompts, generators (see SCHEMA.md)
-scripts/           validate-content.js
-public/            the single-page app (index.html, app.js, styles.css)
-data/              database and tutor config (created on first run, git-ignored)
+scripts/           build-pages.js, serve-docs.js, validate-content.js, make-icons.js
+server.js etc.     the original self-hosted Node server (optional)
 ```
 
 ## Adding content
 
-Add to any `content/bank-*.js` or `content/lessons-*.js` following `content/SCHEMA.md`, then run `npm run validate` and restart the server.
-
-## Hosting for friends
-
-The repository holds the code; students need a running server. On one Wi-Fi network, run it on a laptop and share the local address. For use from anywhere, see [DEPLOY.md](DEPLOY.md): the repo ships a `Dockerfile`, `railway.json` and `fly.toml`, and deploys to Railway in about five clicks.
+Add to any `content/bank-*.js` or `content/lessons-*.js` following `content/SCHEMA.md`, then run `node scripts/validate-content.js`, rebuild with `node scripts/build-pages.js`, and push.
 
 ## Notes
 

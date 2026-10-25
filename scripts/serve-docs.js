@@ -1,0 +1,5 @@
+// Serves the static site in docs/ for local testing (mirrors GitHub Pages).
+const http = require('http'); const fs = require('fs'); const path = require('path');
+const root = path.join(__dirname, '..', 'docs'); const port = Number(process.env.PORT || 8080);
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.json': 'application/json' };
+http.createServer((req, res) => { let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html'; const f = path.join(root, p); if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end('not found'); } res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'no-cache' }); fs.createReadStream(f).pipe(res); }).listen(port, () => console.log(`docs/ at http://localhost:${port}`));

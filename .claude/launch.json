@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
+    { "name": "ascend-pages", "runtimeExecutable": "node", "runtimeArgs": ["scripts/serve-docs.js"], "port": 8080 },
     { "name": "ascend-prep", "runtimeExecutable": "node", "runtimeArgs": ["server.js"], "port": 3000 }
   ]
 }
