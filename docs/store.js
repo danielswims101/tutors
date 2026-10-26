@@ -7,8 +7,8 @@ window.AscendStore = (function () {
   const useSupabase = Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY && window.supabase);
   const EMAIL_DOMAIN = 'users.ascendprep.app';
   const emailFor = (username) => `${username}@${EMAIL_DOMAIN}`;
-  const emptyData = () => ({ ratings: {}, daily: {}, totals: { n: 0, right: 0, secs: 0, xp: 0 }, seen: {}, reviews: {}, plan: null, lessons: {}, badges: {}, tutor: [] });
-  const DATA_COLS = ['ratings', 'daily', 'totals', 'seen', 'reviews', 'plan', 'lessons', 'badges', 'tutor'];
+  const emptyData = () => ({ ratings: {}, daily: {}, totals: { n: 0, right: 0, secs: 0, xp: 0 }, seen: {}, reviews: {}, plan: null, lessons: {}, badges: {}, tutor: [], cards: {}, training: {}, courses: {} });
+  const DATA_COLS = ['ratings', 'daily', 'totals', 'seen', 'reviews', 'plan', 'lessons', 'badges', 'tutor', 'cards', 'training', 'courses'];
   const genCode = () => Array.from(crypto.getRandomValues(new Uint8Array(3))).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
   const USERNAME_RE = /^[a-zA-Z0-9_.-]{3,24}$/;
   function profileFromRow(r) { return { id: r.id, username: r.username, displayName: r.display_name, role: r.role, targetTest: r.target_test, variant: r.variant, grade: r.grade, testDate: r.test_date, dailyGoal: r.daily_goal, shareCode: r.share_code, diagnosticDone: !!r.diagnostic_done, tutorName: r.tutor_name, createdAt: r.created_at }; }
@@ -22,7 +22,7 @@ window.AscendStore = (function () {
     async function authHeaders() { const { data } = await sb.auth.getSession(); return { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session ? data.session.access_token : cfg.SUPABASE_ANON_KEY}`, apikey: cfg.SUPABASE_ANON_KEY }; }
     return {
       mode: 'supabase',
-      async currentUserId() { const { data } = await sb.auth.getUser(); return data.user ? data.user.id : null; },
+      async currentUserId() { const { data: sess } = await sb.auth.getSession(); if (sess.session && sess.session.user) return sess.session.user.id; const { data } = await sb.auth.getUser(); return data.user ? data.user.id : null; },
       async signUp({ username, password, displayName, role, targetTest, variant, grade, testDate }) {
         username = String(username || '').trim().toLowerCase(); if (!USERNAME_RE.test(username)) throw new Error('Username must be 3–24 letters, numbers, dots, dashes or underscores.'); if (!displayName) throw new Error('Please enter a display name.'); if (String(password).length < 8) throw new Error('Password must be at least 8 characters.');
         const res = await fetch(fnUrl('signup'), { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: cfg.SUPABASE_ANON_KEY, Authorization: `Bearer ${cfg.SUPABASE_ANON_KEY}` }, body: JSON.stringify({ username, password, displayName, role, targetTest, variant, grade: grade ? Number(grade) : null, testDate: testDate || null }) });

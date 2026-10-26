@@ -27,6 +27,19 @@ With an Anthropic API key the tutor becomes a live coach that answers anything i
 
 Ascend Prep is an installable web app. On a phone, tablet or computer, open the site and choose **Install app** (on iPhone: Safari → Share → Add to Home Screen). It opens full-screen with its own icon. Sign in with the same username and password on any device; plan, progress, streak and tutor chat live in the account, not on the device. Settings shows how many devices are signed in and can sign out everywhere.
 
+## Built for the 99th percentile
+
+Every student's default goal is the 99th percentile, and the site is organized around closing that gap:
+
+- **Diagnostic that re-tailors everything.** Twenty questions per course set the study plan (three phases), the three focus skills with two-week targets, drill difficulty per skill, the vocabulary level, the daily goal, and the recommended mock tier.
+- **Road to the 99th.** A live projection per section from skill ratings, the gap to the goal, and the weakest skill holding each section back. The 99th corresponds to about 79% accuracy on Elite-level questions.
+- **Several courses at once.** Enroll in the HSPT, SSAT and ISEE together; each has its own diagnostic, plan, focus skills and ratings. Switch from the sidebar.
+- **Mistake journal.** Tag each miss (careless, didn't know, misread, out of time) and see where points leak, by cause and by skill, with the fix for each.
+- **Pace targets.** Every practice question shows the real test's seconds-per-question; your pace per section is tracked and diagnosed.
+- **Weekly report.** This week vs last week, mastery deltas, mocks, focus progress, projection, all in one page you can copy for a parent.
+- **Elite drills.** Once a skill passes 85% mastery the plan schedules level-5 drills for it, and mock recommendations move to Advanced and Elite tiers.
+- **Unlimited flashcards and trainers.** Vocabulary quizzes in six formats across 920 words, a word-parts deck, math-facts decks, custom decks you type or paste, math speed sprints, and an endless math skill ladder.
+
 ## What a student gets
 
 | | |
@@ -40,9 +53,12 @@ Ascend Prep is an installable web app. On a phone, tablet or computer, open the 
 | **Review** | SM-2 spaced repetition of misses and vocabulary flashcards. |
 | **Writing** | Timed prompts, self-scoring rubric, structural feedback; rubric grading and a rewritten opening with the live tutor. |
 | **Progress** | Mastery per skill and section, trends, mock history, badges. Parents see linked students read-only. |
-| **Friends** | Add friends by share code, weekly XP leaderboard, 18 badges, levels. |
+| **Friends** | Add friends by share code, weekly XP leaderboard, 20 badges, levels. |
+| **Vocabulary trainer** | Six quiz formats (definition, word-from-meaning, synonym, antonym, fill-the-blank, spelling), per-word mastery, word of the day, weak-word quizzes, word-parts quiz. |
+| **Math trainer** | Endless generated drills per skill at five levels, a mastery ladder with ranks, timed speed sprints with personal bests, math-facts flashcards. |
+| **Flashcards** | Vocabulary by level, word parts, math facts, questions you missed, and unlimited custom decks (type or paste "front \| back"), all on spaced repetition. |
 
-Content: 789 curated verbal, reading and language questions with teaching explanations, 22 original passages, 220 vocabulary words, 36 writing prompts, plus unlimited generated math and quantitative items across 10 skills and 5 levels.
+Content: 789 curated verbal, reading and language questions with teaching explanations, 22 original passages, 920 vocabulary words, 108 word parts, 36 writing prompts, plus unlimited generated math and quantitative items across 10 skills and 5 levels.
 
 ## Project layout
 

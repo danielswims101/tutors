@@ -1,7 +1,7 @@
 // Ascend Prep service worker (static site): caches the app shell; Supabase traffic is never cached.
-const VERSION = 'v5';
+const VERSION = 'v7';
 const SHELL = `ascend-shell-${VERSION}`;
-const ASSETS = ['./', './index.html', `./app.js?v=${VERSION}`, `./api.js?v=${VERSION}`, `./store.js?v=${VERSION}`, `./engine.js?v=${VERSION}`, `./content.js?v=${VERSION}`, `./config.js?v=${VERSION}`, `./styles.css?v=${VERSION}`, './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
+const ASSETS = ['./', './index.html', `./app.js?v=${VERSION}`, `./api.js?v=${VERSION}`, `./store.js?v=${VERSION}`, `./engine.js?v=${VERSION}`, `./trainer.js?v=${VERSION}`, `./content.js?v=${VERSION}`, `./config.js?v=${VERSION}`, `./styles.css?v=${VERSION}`, './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(SHELL).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== SHELL).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', (e) => {

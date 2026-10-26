@@ -16,7 +16,7 @@ To preview locally: `node scripts/serve-docs.js` then open http://localhost:8080
 
 ## Supabase pieces (already set up)
 
-- Tables: `profiles`, `user_data` (ratings, daily stats, reviews, plan, lessons, badges, tutor chat), `mocks`, `writings`, `public_stats`, `links` (parent ↔ student), `friendships`, `app_config` (tutor key), `tutor_usage`.
+- Tables: `profiles`, `user_data` (ratings, daily stats, reviews, lessons, badges, tutor chat, custom cards, training stats, courses with their plans), `mocks`, `writings`, `public_stats`, `links` (parent ↔ student), `friendships`, `app_config` (tutor key), `tutor_usage`.
 - Edge functions: `signup` (creates a username-based account with no email confirmation) and `tutor` (calls Claude with the API key kept server-side, 150 requests per student per day).
 - RPCs: `link_student`, `add_friend`, `tutor_status`, `set_tutor_config` (admin), `admin_users` (admin).
 
