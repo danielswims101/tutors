@@ -32,10 +32,12 @@ window.Ascend = (function () {
     const score = (q) => { let s = Math.abs(q.level - level) * 10; if (q.test !== test) s += 3; if (exclude.has(q.id)) s += 1000; const seen = S.seen[q.id]; if (seen) s += 50 + (Date.now() - seen < 7 * 864e5 ? 200 : 0); return s + Math.random() * 8; };
     pool.sort((a, b) => score(a) - score(b)); return pool[0];
   }
-  function makeQuestion(S, test, section, skill, level, exclude) {
-    const n = C.TESTS[test] ? C.TESTS[test].choices : 4;
+  function rulesFor(test, variant) { const t = C.TESTS[test]; const vr = (t && t.variantRules && variant && t.variantRules[variant]) || {}; return { choices: vr.choices || (t ? t.choices : 4), penalty: vr.penalty !== undefined ? vr.penalty : !!(t && t.penalty) }; }
+  function fitChoices(q, n) { if (!q || q.choices.length <= n) return q; const correct = q.choices[q.answer]; const wrong = q.choices.filter((_, i) => i !== q.answer); const seed = [...String(q.id)].reduce((a, c) => a + c.charCodeAt(0), 0); const keep = wrong.filter((_, i) => i !== seed % wrong.length).slice(0, n - 1); const choices = [...keep]; choices.splice(seed % n, 0, correct); return { ...q, choices, answer: choices.indexOf(correct) }; }
+  function makeQuestion(S, test, section, skill, level, exclude, variant) {
+    const n = rulesFor(test, variant || (S.profile.targetTest === test ? S.profile.variant : null)).choices;
     if (isGenSkill(skill)) return C.generators.generate(skill, level, n, test);
-    const item = pickBankItem(S, test, skill, level, exclude, section); return item ? { ...item } : null;
+    const item = pickBankItem(S, test, skill, level, exclude, section); return item ? fitChoices({ ...item }, n) : null;
   }
   function chooseSkills(S, test, skills, count) {
     const weights = skills.map(s => { const r = ratingFor(S, test, s); let w = 1 + Math.max(-0.5, Math.min(2, (1400 - r.rating) / 250)); if (r.n < 5) w += 1; if (r.streak <= -2) w += 0.75; return Math.max(0.3, w); });
@@ -106,7 +108,13 @@ window.Ascend = (function () {
   }
 
   // ---- mock tests ----
-  function tierLevels(tier) { return C.TIERS[tier] ? C.TIERS[tier].levels : C.TIERS.standard.levels; }
+  function tierLevels(tier, test, variant) {
+    const base = C.TIERS[tier] ? C.TIERS[tier].levels : C.TIERS.standard.levels;
+    const center = test && variant ? (C.VARIANT_LEVEL[`${test}:${variant}`] || 3) : 3; const shift = Math.round(center - 3); if (!shift) return base;
+    const out = {}; for (const [l, w] of Object.entries(base)) { const nl = Math.max(1, Math.min(5, Number(l) + shift)); out[nl] = (out[nl] || 0) + w; } return out;
+  }
+  const STANINE_BANDS = [[96, 9], [89, 8], [77, 7], [60, 6], [40, 5], [23, 4], [11, 3], [4, 2], [1, 1]];
+  const stanine = (pct) => pct === null || pct === undefined ? null : (STANINE_BANDS.find(([lo]) => pct >= lo) || [1, 1])[1];
   function sampleLevel(levels) { let x = Math.random(); for (const [l, w] of Object.entries(levels)) { x -= w; if (x <= 0) return Number(l); } return Number(Object.keys(levels)[0]); }
   function recommendTier(S, test) {
     const rated = Object.values(S.ratings[test] || {}).filter(r => r.n >= 5);
@@ -117,39 +125,63 @@ window.Ascend = (function () {
     if (avg < 1480) return { tier: 'advanced', reason: `Your average skill rating (${Math.round(avg)}) is above test level. Advanced is the road to the 99th; Elite is the destination.` };
     return { tier: 'elite', reason: `Your average skill rating (${Math.round(avg)}) is well above test level. Elite is where 99th-percentile scorers train; aim for 80%+ here.` };
   }
+  // A mini test keeps the real test's seconds-per-question in every scored section and fits in a 20-minute budget.
+  const MINI_SECONDS = 20 * 60;
+  function miniPlan(test, variant, budget = MINI_SECONDS) {
+    const bp = (C.BLUEPRINTS[test] || {})[variant]; if (!bp) return null;
+    const scored = bp.filter(s => !s.writing && !s.break && !s.experimental); const totalMin = scored.reduce((a, s) => a + s.minutes, 0);
+    const plan = scored.map(s => ({ ...s, spq: s.minutes * 60 / s.count, share: s.minutes / totalMin }));
+    const counts = plan.map(s => Math.max(2, Math.round(budget * s.share / s.spq)));
+    const total = () => plan.reduce((a, s, i) => a + counts[i] * s.spq, 0);
+    let guard = 0; while (total() > budget && guard++ < 50) { let bi = 0; for (let i = 1; i < plan.length; i++) if (counts[i] * plan[i].spq > counts[bi] * plan[bi].spq) bi = i; if (counts[bi] <= 2) break; counts[bi]--; }
+    guard = 0; while (guard++ < 50) { const fit = plan.map((s, i) => i).sort((a, b) => plan[a].spq - plan[b].spq).find(i => total() + plan[i].spq <= budget); if (fit === undefined) break; counts[fit]++; }
+    return plan.map((s, i) => { const seconds = Math.round(counts[i] * s.spq); return { section: s.section, label: s.label, count: counts[i], seconds, minutes: Math.round(seconds / 60 * 10) / 10, spq: Math.round(s.spq), passages: s.passages ? Math.max(0, Math.round(s.passages / s.count * counts[i])) : undefined, mix: s.mix }; });
+  }
   function buildMock(S, { test, variant, tier, length = 'full', section: onlySection }) {
-    const bp = (C.BLUEPRINTS[test] || {})[variant]; if (!bp) throw new Error('Unknown test/variant');
-    const levels = tierLevels(tier); const factor = length === 'half' ? 0.5 : 1; const exclude = new Set(); const usedPassages = new Set(); const sections = [];
+    let bp = (C.BLUEPRINTS[test] || {})[variant]; if (!bp) throw new Error('Unknown test/variant');
+    if (length === 'mini') bp = miniPlan(test, variant);
+    const levels = tierLevels(tier, test, variant); const factor = length === 'half' ? 0.5 : 1; const exclude = new Set(); const usedPassages = new Set(); const sections = [];
     const recentPassages = new Set(); for (const id of Object.keys(S.seen)) { const q = C.byId.get(id); if (q && q.passageId) recentPassages.add(q.passageId); }
+    const fullMode = length === 'full' && !onlySection;
     for (const sec of bp) {
       if (onlySection && sec.section !== onlySection) continue;
-      const label = sec.label || C.TESTS[test].sections[sec.section]; const minutes = Math.max(5, Math.round(sec.minutes * factor));
-      if (sec.writing) { const prompts = C.writingPrompts.filter(p => p.test === test && Math.abs(p.level - (C.VARIANT_LEVEL[`${test}:${variant}`] || 3)) <= 1.5); const prompt = prompts.length ? pick(prompts) : (C.writingPrompts.filter(p => p.test === test)[0] || C.writingPrompts[0]); sections.push({ section: sec.section, label, minutes, writing: true, prompt: prompt || { id: 'generic', prompt: 'Write about a time you learned something important. Explain what happened and why it mattered.', minutes }, questions: [] }); continue; }
+      if ((sec.break || sec.experimental) && !fullMode) continue;
+      if (sec.break) { sections.push({ section: 'break', label: 'Break', minutes: sec.minutes, seconds: sec.minutes * 60, break: true, note: sec.note || null, questions: [], passages: {} }); continue; }
+      const label = sec.label || (sec.experimental ? 'Experimental (unscored)' : C.TESTS[test].sections[sec.section]); const minutes = length === 'mini' ? sec.minutes : Math.max(5, Math.round(sec.minutes * factor)); const seconds = length === 'mini' ? sec.seconds : minutes * 60;
+      if (sec.writing) { const prompts = C.writingPrompts.filter(p => p.test === test && Math.abs(p.level - (C.VARIANT_LEVEL[`${test}:${variant}`] || 3)) <= 1.5); const prompt = prompts.length ? pick(prompts) : (C.writingPrompts.filter(p => p.test === test)[0] || C.writingPrompts[0]); let alt = null; if (sec.promptChoice >= 2) { const others = prompts.filter(p => p !== prompt && p.type !== prompt.type); alt = others.length ? pick(others) : (prompts.filter(p => p !== prompt)[0] || null); } sections.push({ section: sec.section, label, minutes, seconds: minutes * 60, writing: true, prompt: prompt || { id: 'generic', prompt: 'Write about a time you learned something important. Explain what happened and why it mattered.', minutes }, promptAlt: alt, questions: [] }); continue; }
       const questions = []; const passages = {}; const total = Math.max(1, Math.round(sec.count * factor));
-      if (sec.passages) { const need = Math.round(sec.passages * factor); const pool = C.passages.filter(p => (p.test === test || p.test === 'all') && !usedPassages.has(p.id)); const score = (p) => Math.min(...Object.keys(levels).map(l => Math.abs(p.level - Number(l)) * (1 - levels[l]))) * 10 + (recentPassages.has(p.id) ? 40 : 0) + (p.test === test ? -3 : 0) + Math.random() * 10; pool.sort((a, b) => score(a) - score(b)); let got = 0; for (const p of pool) { if (got >= need) break; const qs = C.questions.filter(q => q.passageId === p.id); if (!qs.length) continue; usedPassages.add(p.id); passages[p.id] = p; for (const q of qs) { if (got >= need) break; questions.push({ ...q }); exclude.add(q.id); got++; } } }
-      if (sec.mix) { const mixTotal = Object.values(sec.mix).reduce((a, b) => a + b, 0); const target = total - questions.length; const alloc = {}; let allocated = 0; for (const [s, c] of Object.entries(sec.mix)) { alloc[s] = Math.floor(c / mixTotal * target); allocated += alloc[s]; } const keys = Object.keys(sec.mix); let i = 0; while (allocated < target) { alloc[keys[i % keys.length]]++; allocated++; i++; } const order = []; for (const [s, c] of Object.entries(alloc)) for (let k = 0; k < c; k++) order.push(s); const seq = ['verbal', 'quant', 'language'].includes(sec.section) ? order : shuffle(order); for (const s of seq) { const q = makeQuestion(S, test, sec.section, s, sampleLevel(levels), exclude); if (!q) continue; exclude.add(q.id); questions.push(q); } }
-      questions.forEach((q, idx) => { q.n = idx + 1; }); sections.push({ section: sec.section, label, minutes, questions, passages });
+      if (sec.passages) { const need = Math.round(sec.passages * factor); const pool = C.passages.filter(p => (p.test === test || p.test === 'all') && !usedPassages.has(p.id)); const score = (p) => Math.min(...Object.keys(levels).map(l => Math.abs(p.level - Number(l)) * (1 - levels[l]))) * 10 + (recentPassages.has(p.id) ? 40 : 0) + (p.test === test ? -3 : 0) + Math.random() * 10; pool.sort((a, b) => score(a) - score(b)); let got = 0; let litGot = 0; const isLit = (p) => ['fiction', 'poetry'].includes(p.genre); const litTarget = sec.literary ? Math.round(sec.literary * factor) : null; for (const p of pool) { if (got >= need) break; if (litTarget !== null) { const lit = isLit(p); const litLeft = litTarget - litGot; const infoLeft = (need - got) - Math.max(0, litLeft); if (lit && litLeft <= 0 && pool.some(x => !usedPassages.has(x.id) && !isLit(x))) continue; if (!lit && infoLeft <= 0 && pool.some(x => !usedPassages.has(x.id) && isLit(x))) continue; } const qs = C.questions.filter(q => q.passageId === p.id); if (!qs.length) continue; usedPassages.add(p.id); passages[p.id] = p; let taken = 0; for (const q of qs) { if (got >= need || (sec.perPassage && taken >= sec.perPassage) || (litTarget !== null && isLit(p) && litGot >= litTarget && taken >= 4)) break; questions.push(fitChoices({ ...q }, rulesFor(test, variant).choices)); exclude.add(q.id); got++; taken++; if (isLit(p)) litGot++; } } }
+      if (sec.mix) { const mixTotal = Object.values(sec.mix).reduce((a, b) => a + b, 0); const target = total - questions.length; const alloc = {}; let allocated = 0; for (const [s, c] of Object.entries(sec.mix)) { alloc[s] = Math.floor(c / mixTotal * target); allocated += alloc[s]; } const keys = Object.keys(sec.mix); let i = 0; while (allocated < target) { alloc[keys[i % keys.length]]++; allocated++; i++; } const order = []; for (const [s, c] of Object.entries(alloc)) for (let k = 0; k < c; k++) order.push(s); const seq = ['verbal', 'quant', 'language'].includes(sec.section) ? order : shuffle(order); for (const s of seq) { const q = makeQuestion(S, test, sec.experimental ? undefined : sec.section, s, sampleLevel(levels), exclude, variant); if (!q) continue; exclude.add(q.id); questions.push(q); } }
+      questions.forEach((q, idx) => { q.n = idx + 1; }); sections.push({ section: sec.section, label, minutes, seconds, spq: sec.spq || Math.round(seconds / Math.max(1, questions.length)), experimental: !!sec.experimental, questions, passages });
     }
     return { test, variant, tier, length, sections };
   }
   function estimatePercentile(pct, tier) { const adj = pct + ({ foundation: -12, standard: 0, advanced: 7, elite: 14 }[tier] || 0); return Math.max(1, Math.min(99, Math.round(100 / (1 + Math.exp(-(adj - 62) / 9))))); }
   function scoreMock(mock, responses) {
-    const penalty = C.TESTS[mock.test].penalty; const out = { sections: [], skills: {}, totalRight: 0, totalWrong: 0, totalBlank: 0, totalCount: 0 };
+    const penalty = rulesFor(mock.test, mock.variant).penalty; const out = { sections: [], skills: {}, totalRight: 0, totalWrong: 0, totalBlank: 0, totalCount: 0 };
     for (const sec of mock.sections) {
+      if (sec.break) continue;
       if (sec.writing) { const text = responses[`w:${sec.section}`] || ''; out.sections.push({ section: sec.section, label: sec.label, writing: true, text, wordCount: String(text).trim().split(/\s+/).filter(Boolean).length }); continue; }
       let right = 0, wrong = 0, blank = 0; const items = [];
       for (const q of sec.questions) { const choice = responses[q.id]; const answered = Number.isInteger(choice); const correct = answered && choice === q.answer; if (!answered) blank++; else if (correct) right++; else wrong++; const sk = out.skills[q.skill] || (out.skills[q.skill] = { right: 0, total: 0, name: C.SKILL_NAMES[q.skill] || q.skill }); sk.total++; if (correct) sk.right++; items.push({ n: q.n, id: q.id, skill: q.skill, level: q.level, choice: answered ? choice : null, answer: q.answer, correct, stem: q.stem, choices: q.choices, explanation: q.explanation, passageId: q.passageId || null }); }
       const count = sec.questions.length; const raw = penalty ? right - 0.25 * wrong : right; const pct = count ? Math.round(right / count * 100) : 0;
-      out.sections.push({ section: sec.section, label: sec.label, count, right, wrong, blank, raw: Math.round(raw * 100) / 100, pct, percentile: estimatePercentile(pct, mock.tier), items, passages: sec.passages });
+      const pctl = sec.experimental ? null : estimatePercentile(pct, mock.tier);
+      out.sections.push({ section: sec.section, label: sec.label, experimental: !!sec.experimental, count, right, wrong, blank, raw: Math.round(raw * 100) / 100, pct, percentile: pctl, stanine: stanine(pctl), items, passages: sec.passages });
+      if (sec.experimental) continue;
       out.totalRight += right; out.totalWrong += wrong; out.totalBlank += blank; out.totalCount += count;
     }
-    out.pct = out.totalCount ? Math.round(out.totalRight / out.totalCount * 100) : 0; out.percentile = estimatePercentile(out.pct, mock.tier); out.raw = penalty ? Math.round((out.totalRight - 0.25 * out.totalWrong) * 100) / 100 : out.totalRight; out.penalty = penalty;
+    out.pct = out.totalCount ? Math.round(out.totalRight / out.totalCount * 100) : 0; out.percentile = estimatePercentile(out.pct, mock.tier); out.stanine = stanine(out.percentile); out.realism = !!mock.realism; out.raw = penalty ? Math.round((out.totalRight - 0.25 * out.totalWrong) * 100) / 100 : out.totalRight; out.penalty = penalty;
     const arr = Object.entries(out.skills).map(([k, v]) => ({ skill: k, ...v, pct: Math.round(v.right / v.total * 100) })).sort((a, b) => a.pct - b.pct);
     out.weakest = arr.filter(s => s.total >= 3).slice(0, 3); out.strongest = arr.filter(s => s.total >= 3).slice(-3).reverse(); return out;
   }
 
   // ---- progress / plan / gamification ----
+  const DAILY_MIN = 60; // minutes every student must study each day
+  const studyMinutes = (day) => Math.round(Math.max((day && day.study) || 0, (day && day.secs) || 0) / 60);
+  const fullDay = (day) => !!day && studyMinutes(day) >= DAILY_MIN;
   function streakOf(daily) { let streak = 0; const d = new Date(); for (let i = 0; i < 400; i++) { const k = dayOf(d); if (daily[k] && daily[k].n > 0) streak++; else if (i > 0) break; d.setDate(d.getDate() - 1); } return streak; }
+  function fullStreakOf(daily) { let streak = 0; const d = new Date(); for (let i = 0; i < 400; i++) { const k = dayOf(d); if (fullDay(daily[k])) streak++; else if (i > 0) break; d.setDate(d.getDate() - 1); } return streak; }
+  function addStudyTime(S, seconds) { const day = todayKey(); const d = S.daily[day] || (S.daily[day] = { n: 0, right: 0, secs: 0 }); d.study = (d.study || 0) + Math.max(0, Math.min(600, Number(seconds) || 0)); return studyMinutes(d); }
   function dueCount(S) { const now = Date.now(); return Object.values(S.reviews).filter(r => new Date(r.due).getTime() <= now).length; }
   function xpFor(S) { return S.totals.xp || 0; }
   function xpSince(S, days) { const cutoff = new Date(Date.now() - days * 864e5); let xp = 0; for (const [k, v] of Object.entries(S.daily)) if (new Date(k + 'T12:00:00') >= cutoff) xp += v.xp || 0; return xp; }
@@ -160,7 +192,7 @@ window.Ascend = (function () {
     const bySection = {}; for (const [sec, list] of Object.entries(C.SECTION_SKILLS[test])) { const rows = skills.filter(s => list.includes(s.skill)); bySection[sec] = { name: C.TESTS[test].sections[sec], skills: list.filter(s => s !== 'writing').map(s => skills.find(x => x.skill === s) || { skill: s, name: C.SKILL_NAMES[s], rating: null, n: 0, mastery: null }), mastery: rows.length ? Math.round(rows.reduce((a, b) => a + b.mastery, 0) / rows.length) : null }; }
     const cutoff = new Date(Date.now() - 60 * 864e5); const daily = Object.entries(S.daily).filter(([k]) => new Date(k + 'T12:00:00') >= cutoff).sort().map(([day, v]) => ({ day, ...v }));
     const week = new Date(Date.now() - 7 * 864e5); const recent = daily.filter(d => new Date(d.day + 'T12:00:00') >= week).reduce((a, d) => ({ n: a.n + d.n, right: a.right + d.right }), { n: 0, right: 0 });
-    const today = (S.daily[todayKey()] || { n: 0 }).n; const streak = streakOf(S.daily); const due = dueCount(S);
+    const todayRow = S.daily[todayKey()] || { n: 0 }; const today = todayRow.n; const todayMinutes = studyMinutes(todayRow); const streak = fullStreakOf(S.daily); const activeStreak = streakOf(S.daily); const due = dueCount(S);
     const lessonsDone = Object.entries(S.lessons).map(([lesson_id, v]) => ({ lesson_id, ...v }));
     const recs = [];
     if (due > 0) recs.push({ type: 'review', title: `Review ${due} due item${due > 1 ? 's' : ''}`, why: 'Spaced retrieval of recent misses is the highest-return 10 minutes you can spend.', action: { page: 'review' } });
@@ -169,7 +201,7 @@ window.Ascend = (function () {
     if (!skills.length) recs.push({ type: 'practice', title: 'Take a 10-question diagnostic', why: 'We calibrate every skill from your first answers; nothing is wasted.', action: { page: 'practice' } });
     const completed = mocksIndex.filter(m => m.status === 'completed'); const lastMock = completed[0];
     if (!lastMock || (Date.now() - new Date(lastMock.completed_at).getTime()) > 7 * 864e5) recs.push({ type: 'mock', title: lastMock ? 'Time for a mock test' : 'Take your first mock test', why: lastMock ? 'It has been over a week. Weekly timed practice keeps pacing sharp.' : 'A baseline mock tells us exactly where you stand.', action: { page: 'mock' } });
-    return { test, skills, bySection, daily, totals: S.totals, recent, today, streak, due, mocks: mocksIndex, lessonsDone, recommendations: recs.slice(0, 4), tierRecommendation: recommendTier(S, test) };
+    return { test, skills, bySection, daily: daily.map(d => ({ ...d, minutes: studyMinutes(d), full: fullDay(d) })), totals: S.totals, recent, today, todayMinutes, dailyMinimum: DAILY_MIN, minutesLeft: Math.max(0, DAILY_MIN - todayMinutes), streak, activeStreak, due, mocks: mocksIndex, lessonsDone, recommendations: recs.slice(0, 4), tierRecommendation: recommendTier(S, test) };
   }
   function buildPlan(S) {
     const test = S.profile.targetTest; const p = progressSummary(S);
@@ -182,13 +214,21 @@ window.Ascend = (function () {
       const date = dayOf(new Date(start.getTime() + d * 864e5 + 12 * 3600e3)); const items = []; const daysLeft = horizon - d;
       if (d === 0 && !S.profile.diagnosticDone) items.push({ type: 'diagnostic', label: 'Diagnostic: 20 questions to calibrate your plan', minutes: 15 });
       items.push({ type: 'review', label: 'Spaced review (what is due)', minutes: 8 });
-      if (d > 0 && d % 7 === 6 && daysLeft > 0) items.push({ type: 'mock', label: d < 14 ? 'Half-length mock test' : 'Full-length mock test', minutes: d < 14 ? 75 : 150, length: d < 14 ? 'half' : 'full' });
-      else { const lesson = lessonQueue[li]; if (lesson) { items.push({ type: 'lesson', ref: lesson.id, label: `Lesson: ${lesson.title}`, minutes: lesson.minutes, skill: lesson.skill }); li = (li + 1) % Math.max(1, lessonQueue.length); } const skill = skillOrder[di % skillOrder.length]; di++; const sm = p.skills.find(x => x.skill === skill); const elite = sm && sm.mastery >= 85; items.push({ type: 'drill', ref: skill, level: elite ? 5 : undefined, label: `${elite ? 'Elite drill' : 'Drill'}: ${C.SKILL_NAMES[skill]} (10 questions)`, minutes: 10 }); if (d % 2 === 1) items.push({ type: 'drill', label: 'Adaptive mix (10 questions)', minutes: 10 }); if (d >= horizon / 3 && d % 3 === 2) { const strong = p.skills.filter(x => x.mastery >= 80).sort((a, b) => b.mastery - a.mastery)[d % Math.max(1, p.skills.filter(x => x.mastery >= 80).length)]; if (strong) items.push({ type: 'drill', ref: strong.skill, level: 5, label: `Elite drill: ${strong.name} (10 questions)`, minutes: 10 }); } if (hasWriting && d % 7 === 3) items.push({ type: 'writing', label: 'Timed writing practice', minutes: 25 }); items.push({ type: 'vocab', label: 'Vocabulary: 10 new words', minutes: 5 }); }
-      if (daysLeft === 1) items.splice(0, items.length, { type: 'review', label: 'Light review only: due items and your error log', minutes: 15 }, { type: 'rest', label: 'Rest. Pack two pencils, a snack and your admission ticket. Sleep early.', minutes: 0 });
+      if (d > 0 && d % 7 === 6 && daysLeft > 0) { items.push({ type: 'mock', label: d < 14 ? 'Half-length mock test' : 'Full-length mock test', minutes: d < 14 ? 75 : 150, length: d < 14 ? 'half' : 'full' }); }
+      else { if (d > 0 || S.profile.diagnosticDone) items.push({ type: 'mini', label: 'Daily mini test: every section at real test pace (20 min)', minutes: 20, length: 'mini' }); const lesson = lessonQueue[li]; if (lesson) { items.push({ type: 'lesson', ref: lesson.id, label: `Lesson: ${lesson.title}`, minutes: lesson.minutes, skill: lesson.skill }); li = (li + 1) % Math.max(1, lessonQueue.length); } const skill = skillOrder[di % skillOrder.length]; di++; const sm = p.skills.find(x => x.skill === skill); const elite = sm && sm.mastery >= 85; items.push({ type: 'drill', ref: skill, level: elite ? 5 : undefined, label: `${elite ? 'Elite drill' : 'Drill'}: ${C.SKILL_NAMES[skill]} (10 questions)`, minutes: 10 }); if (d % 2 === 1) items.push({ type: 'drill', label: 'Adaptive mix (10 questions)', minutes: 10 }); if (d >= horizon / 3 && d % 3 === 2) { const strong = p.skills.filter(x => x.mastery >= 80).sort((a, b) => b.mastery - a.mastery)[d % Math.max(1, p.skills.filter(x => x.mastery >= 80).length)]; if (strong) items.push({ type: 'drill', ref: strong.skill, level: 5, label: `Elite drill: ${strong.name} (10 questions)`, minutes: 10 }); } if (hasWriting && d % 7 === 3) items.push({ type: 'writing', label: 'Timed writing practice', minutes: 25 }); items.push({ type: 'vocab', label: 'Vocabulary: 10 new words', minutes: 5 }); }
+      const fillers = [{ type: 'flash', label: 'Flashcards: due cards and 10 new (10 min)', minutes: 10 }, { type: 'vocabquiz', label: 'Vocabulary quiz: 10 questions (8 min)', minutes: 8 }, { type: 'drill', label: 'Adaptive mix (10 questions)', minutes: 10 }, { type: 'sprint', label: 'Math speed sprint (5 min)', minutes: 5 }];
+      let fi = 0; while (items.reduce((a, i) => a + (i.minutes || 0), 0) < DAILY_MIN && fi < fillers.length) { const f = fillers[fi++]; if (!items.some(i => i.type === f.type && i.label === f.label)) items.push({ ...f }); }
+      if (daysLeft === 1) items.splice(0, items.length, { type: 'review', label: 'Light review only: due items and your error log', minutes: 15 }, { type: 'flash', label: 'Flashcards: your weakest 30 cards', minutes: 15 }, { type: 'mini', label: 'One mini test at real pace, then stop', minutes: 20, length: 'mini' }, { type: 'rest', label: 'Rest. Pack two pencils, a snack and your admission ticket. Sleep early.', minutes: 0 });
       const phase = horizon <= 10 ? 'Rehearsal' : d < horizon / 3 ? 'Foundations' : d < horizon * 2 / 3 ? 'Build' : 'Rehearsal';
       days.push({ date, phase, items: items.map(it => ({ ...it, done: false })) });
     }
     return { test, generatedAt: nowIso(), horizonDays: horizon, testDate: S.profile.testDate || null, phases: { Foundations: 'Fix the weakest skills with lessons and short drills.', Build: 'Broaden: every section, harder levels, weekly mocks.', Rehearsal: 'Timing, pacing and full-length rehearsal. Taper before test day.' }, days };
+  }
+  function extendDay(S, day, minutesNeeded) {
+    const extras = [{ type: 'mini', label: 'Extra: mini test at real pace (20 min)', minutes: 20, length: 'mini' }, { type: 'drill', label: 'Extra: adaptive mix (10 questions)', minutes: 10 }, { type: 'flash', label: 'Extra: flashcards (10 min)', minutes: 10 }, { type: 'vocabquiz', label: 'Extra: vocabulary quiz (8 min)', minutes: 8 }, { type: 'sprint', label: 'Extra: math speed sprint (5 min)', minutes: 5 }, { type: 'review', label: 'Extra: spaced review (8 min)', minutes: 8 }];
+    let added = 0, i = 0; const pending = day.items.filter(it => !it.done).reduce((a, it) => a + (it.minutes || 0), 0); let need = minutesNeeded - pending;
+    while (need > 0 && i < extras.length * 2) { const e = extras[i % extras.length]; day.items.push({ ...e, extra: true, done: false }); need -= e.minutes; added++; i++; }
+    return added;
   }
   function markDone(S, date, index, type) { const plan = S.plan; if (!plan) return null; const day = plan.days.find(x => x.date === date) || plan.days.find(x => x.date === todayKey()); if (!day) return plan; if (Number.isInteger(index) && day.items[index]) day.items[index].done = true; else if (type) { const it = day.items.find(i => i.type === type && !i.done); if (it) it.done = true; } return plan; }
   const BADGES = [
@@ -196,6 +236,7 @@ window.Ascend = (function () {
     { id: 'streak-3', name: 'Warming Up', desc: '3-day streak', icon: '🔥', test: (s) => s.streak >= 3 }, { id: 'streak-7', name: 'On Fire', desc: '7-day streak', icon: '🔥', test: (s) => s.streak >= 7 }, { id: 'streak-30', name: 'Unstoppable', desc: '30-day streak', icon: '☄️', test: (s) => s.streak >= 30 },
     { id: 'diagnostic', name: 'Calibrated', desc: 'Complete the diagnostic', icon: '🎯', test: (s) => s.diagnostic }, { id: 'first-mock', name: 'Test Day Rehearsal', desc: 'Finish a mock test', icon: '⏱', test: (s) => s.mocks >= 1 }, { id: 'mock-80', name: 'Top Form', desc: 'Score 80% or higher on a mock test', icon: '🏆', test: (s) => s.bestMock >= 80 }, { id: 'mock-90', name: 'Elite', desc: 'Score 90% or higher on a mock test', icon: '👑', test: (s) => s.bestMock >= 90 },
     { id: 'scholar', name: 'Scholar', desc: 'Complete 5 lessons', icon: '📘', test: (s) => s.lessons >= 5 }, { id: 'professor', name: 'Professor', desc: 'Complete 20 lessons', icon: '🎓', test: (s) => s.lessons >= 20 }, { id: 'mastery', name: 'Mastery', desc: 'Reach 85% mastery in any skill (15+ questions)', icon: '⭐', test: (s) => s.topMastery >= 85 },
+    { id: 'full-day', name: 'Full Hour', desc: 'Study 60 minutes in one day', icon: '⏳', test: (s) => s.todayMinutes >= 60 || s.fullStreak >= 1 }, { id: 'iron-week', name: 'Iron Week', desc: 'Seven straight days of 60+ minutes', icon: '🛡', test: (s) => s.fullStreak >= 7 }, { id: 'mini-10', name: 'Pace Setter', desc: 'Complete 10 mini tests', icon: '🎯', test: (s) => s.minis >= 10 },
     { id: 'club-99', name: '99 Club', desc: 'Projected 99th percentile in your active course', icon: '💎', test: (s) => s.projected >= 99 }, { id: 'elite-80', name: 'Elite Form', desc: 'Score 80%+ on an Elite-tier mock test', icon: '🥇', test: (s) => s.bestElite >= 80 },
     { id: 'wordsmith', name: 'Wordsmith', desc: 'Review 50 vocabulary cards', icon: '📖', test: (s) => s.vocabReviews >= 50 }, { id: 'writer', name: 'Writer', desc: 'Submit 3 writing responses', icon: '✍️', test: (s) => s.writings >= 3 }, { id: 'social', name: 'Study Buddy', desc: 'Add a friend', icon: '🤝', test: (s) => s.friends >= 1 }, { id: 'calibrated-mind', name: 'Know Thyself', desc: '20 answers where confidence matched the result', icon: '🧠', test: (s) => s.calibrated >= 20 }
   ];
@@ -203,11 +244,11 @@ window.Ascend = (function () {
     const best = (ctx.mocks || []).filter(m => m.status === 'completed').reduce((a, m) => Math.max(a, (m.results && m.results.pct) || 0), 0);
     const R = S.ratings[S.profile.targetTest] || {};
     const proj = scoreProjection(S, ctx.mocks || []); const bestElite = (ctx.mocks || []).filter(m => m.status === 'completed' && m.tier === 'elite' && m.results).reduce((a, m) => Math.max(a, m.results.pct), 0);
-    const s = { projected: proj.overall || 0, bestElite, attempts: S.totals.n, streak: streakOf(S.daily), diagnostic: !!S.profile.diagnosticDone, mocks: (ctx.mocks || []).filter(m => m.status === 'completed').length, bestMock: best, lessons: Object.values(S.lessons).filter(l => l.status === 'completed').length, topMastery: Math.max(0, ...Object.values(R).filter(r => r.n >= 15).map(r => mastery(r.rating))), vocabReviews: Object.values(S.reviews).filter(r => r.kind === 'vocab').reduce((a, r) => a + (r.reps || 0), 0), writings: ctx.writings || 0, friends: ctx.friends || 0, calibrated: S.totals.calibrated || 0 };
+    const s = { projected: proj.overall || 0, bestElite, minis: (ctx.mocks || []).filter(m => m.status === 'completed' && m.length === 'mini').length, todayMinutes: studyMinutes(S.daily[todayKey()] || {}), fullStreak: fullStreakOf(S.daily), attempts: S.totals.n, streak: streakOf(S.daily), diagnostic: !!S.profile.diagnosticDone, mocks: (ctx.mocks || []).filter(m => m.status === 'completed').length, bestMock: best, lessons: Object.values(S.lessons).filter(l => l.status === 'completed').length, topMastery: Math.max(0, ...Object.values(R).filter(r => r.n >= 15).map(r => mastery(r.rating))), vocabReviews: Object.values(S.reviews).filter(r => r.kind === 'vocab').reduce((a, r) => a + (r.reps || 0), 0), writings: ctx.writings || 0, friends: ctx.friends || 0, calibrated: S.totals.calibrated || 0 };
     const fresh = []; for (const b of BADGES) if (!S.badges[b.id] && b.test(s)) { S.badges[b.id] = nowIso(); fresh.push({ id: b.id, name: b.name, desc: b.desc, icon: b.icon }); } return fresh;
   }
   const badgeList = (S) => BADGES.map(b => ({ id: b.id, name: b.name, desc: b.desc, icon: b.icon, earnedAt: S.badges[b.id] || null }));
-  function publicStats(S) { const xp = xpFor(S); const week = new Date(Date.now() - 7 * 864e5); let n = 0, right = 0; for (const [k, v] of Object.entries(S.daily)) if (new Date(k + 'T12:00:00') >= week) { n += v.n; right += v.right; } return { display_name: S.profile.displayName, username: S.profile.username, test: S.profile.targetTest, xp, week_xp: xpSince(S, 7), level: levelFor(xp), streak: streakOf(S.daily), badges: Object.keys(S.badges).length, week_questions: n, week_accuracy: n ? Math.round(right / n * 100) : null }; }
+  function publicStats(S) { const xp = xpFor(S); const week = new Date(Date.now() - 7 * 864e5); let n = 0, right = 0; for (const [k, v] of Object.entries(S.daily)) if (new Date(k + 'T12:00:00') >= week) { n += v.n; right += v.right; } return { display_name: S.profile.displayName, username: S.profile.username, test: S.profile.targetTest, xp, week_xp: xpSince(S, 7), level: levelFor(xp), streak: fullStreakOf(S.daily), badges: Object.keys(S.badges).length, week_questions: n, week_accuracy: n ? Math.round(right / n * 100) : null }; }
 
   // ---- built-in tutor ----
   const tutorName = (S) => S.profile.tutorName || 'Coach Ada';
@@ -237,7 +278,7 @@ window.Ascend = (function () {
   }
 
   // ---- pacing targets (seconds per question on the real test) ----
-  function targetSeconds(test, section) { const bp = (C.BLUEPRINTS[test] || {}); const first = Object.values(bp)[0] || []; const sec = first.find(x => x.section === section && !x.writing); if (!sec) return null; return Math.round(sec.minutes * 60 / sec.count); }
+  function targetSeconds(test, section) { const bp = (C.BLUEPRINTS[test] || {}); const first = Object.values(bp)[0] || []; const sec = first.find(x => x.section === section && !x.writing && !x.break && !x.experimental); if (!sec) return null; return Math.round(sec.minutes * 60 / sec.count); }
   // ---- daily mastery snapshots (for weekly reports) ----
   function masteryMap(S) { const out = {}; for (const [test, skills] of Object.entries(S.ratings)) for (const [skill, r] of Object.entries(skills)) out[`${test}:${skill}`] = mastery(r.rating); return out; }
   function snapshotIfNeeded(S) { const tr = S.training = S.training || {}; const snaps = tr.snapshots = tr.snapshots || {}; const today = todayKey(); if (snaps[today]) return; snaps[today] = masteryMap(S); const keys = Object.keys(snaps).sort(); while (keys.length > 70) delete snaps[keys.shift()]; }
@@ -284,7 +325,7 @@ window.Ascend = (function () {
   }
   // ---- weekly report ----
   function weeklyReport(S, mocksIndex = []) {
-    const test = S.profile.targetTest; const sum = (from, to) => { let n = 0, right = 0, secs = 0, xp = 0, days = 0; for (const [k, v] of Object.entries(S.daily)) { const d = new Date(k + 'T12:00:00'); if (d >= from && d < to) { n += v.n; right += v.right; secs += v.secs || 0; xp += v.xp || 0; if (v.n) days++; } } return { n, right, secs: Math.round(secs / 60), xp, days, acc: n ? Math.round(right / n * 100) : null }; };
+    const test = S.profile.targetTest; const sum = (from, to) => { let n = 0, right = 0, mins = 0, xp = 0, days = 0, full = 0; for (const [k, v] of Object.entries(S.daily)) { const d = new Date(k + 'T12:00:00'); if (d >= from && d < to) { n += v.n; right += v.right; mins += studyMinutes(v); xp += v.xp || 0; if (v.n || v.study) days++; if (fullDay(v)) full++; } } return { n, right, secs: mins, xp, days, full, acc: n ? Math.round(right / n * 100) : null }; };
     const now = new Date(); const w1 = new Date(now.getTime() - 7 * 864e5), w2 = new Date(now.getTime() - 14 * 864e5);
     const thisWeek = sum(w1, new Date(now.getTime() + 864e5)), lastWeek = sum(w2, w1);
     const snaps = (S.training && S.training.snapshots) || {}; const keys = Object.keys(snaps).sort(); const weekAgoKey = keys.filter(k => k <= w1.toISOString().slice(0, 10)).pop() || keys[0]; const old = weekAgoKey ? snaps[weekAgoKey] : {};
@@ -292,7 +333,7 @@ window.Ascend = (function () {
     const mocks = mocksIndex.filter(m => m.status === 'completed' && m.completed_at && new Date(m.completed_at) >= w1).map(m => ({ id: m.id, at: m.completed_at, pct: m.results.pct, percentile: m.results.percentile }));
     const lessons = Object.values(S.lessons).filter(l => l.status === 'completed' && l.completedAt && new Date(l.completedAt) >= w1).length;
     const focus = focusStatus(S); const proj = scoreProjection(S, mocksIndex);
-    const lines = [`Ascend Prep weekly report for ${S.profile.displayName} (${C.TESTS[test].name})`, `This week: ${thisWeek.n} questions at ${thisWeek.acc === null ? '—' : thisWeek.acc + '%'} accuracy, ${thisWeek.secs} focused minutes, ${thisWeek.days} active days, ${lessons} lessons, ${mocks.length} mock test${mocks.length === 1 ? '' : 's'}.`, `Last week: ${lastWeek.n} questions at ${lastWeek.acc === null ? '—' : lastWeek.acc + '%'}.`];
+    const lines = [`Ascend Prep weekly report for ${S.profile.displayName} (${C.TESTS[test].name})`, `This week: ${thisWeek.n} questions at ${thisWeek.acc === null ? '—' : thisWeek.acc + '%'} accuracy, ${thisWeek.secs} study minutes, ${thisWeek.full} of 7 days met the 60-minute minimum, ${lessons} lessons, ${mocks.length} mock test${mocks.length === 1 ? '' : 's'}.`, `Last week: ${lastWeek.n} questions at ${lastWeek.acc === null ? '—' : lastWeek.acc + '%'}.`];
     const up = deltas.filter(d => d.delta !== null && d.delta > 0).slice(0, 3); const down = deltas.filter(d => d.delta !== null && d.delta < 0).slice(-2);
     if (up.length) lines.push(`Improved: ${up.map(d => `${d.name} +${d.delta}`).join(', ')}.`); if (down.length) lines.push(`Slipped: ${down.map(d => `${d.name} ${d.delta}`).join(', ')}.`);
     if (proj.overall !== null) lines.push(`Projected overall: ${proj.overall}th percentile (goal ${proj.goal}th).`);
@@ -304,5 +345,5 @@ window.Ascend = (function () {
   function tagMistake(S, { id, skill, section, test, type, stem }) { const tr = S.training = S.training || {}; const errors = tr.errors = tr.errors || []; if (!ERROR_TYPES.some(t => t[0] === type)) return null; const e = { id, skill, section, test: test || S.profile.targetTest, type, stem: String(stem || '').slice(0, 120), at: nowIso() }; errors.unshift(e); if (errors.length > 600) errors.length = 600; return e; }
   function mistakeSummary(S) { const errors = ((S.training || {}).errors || []).filter(e => e.test === S.profile.targetTest); const byType = {}; const bySkill = {}; for (const e of errors) { byType[e.type] = (byType[e.type] || 0) + 1; const sk = bySkill[e.skill] || (bySkill[e.skill] = { skill: e.skill, name: C.SKILL_NAMES[e.skill] || e.skill, n: 0, types: {} }); sk.n++; sk.types[e.type] = (sk.types[e.type] || 0) + 1; } const skills = Object.values(bySkill).sort((a, b) => b.n - a.n); const last30 = errors.filter(e => new Date(e.at) >= new Date(Date.now() - 30 * 864e5)); const advice = []; const tot = errors.length || 1; if ((byType.careless || 0) / tot >= 0.35) advice.push('Careless slips dominate. Your fix is a routine: reread the question, do the last step on paper, and check the answer against the question before moving on.'); if ((byType["didn't know"] || 0) / tot >= 0.35) advice.push('Most misses are content gaps. Lessons close those fastest; drill after each lesson.'); if ((byType.misread || 0) / tot >= 0.25) advice.push('Misreads are frequent. Underline the question stem\'s key words (NOT, EXCEPT, least, greatest) before looking at the choices.'); if ((byType.time || 0) / tot >= 0.25) advice.push('Time pressure costs you points. Use the pace target in practice and practice flagging instead of stalling.'); return { total: errors.length, recent: last30.length, byType, skills, latest: errors.slice(0, 30), advice, types: ERROR_TYPES }; }
 
-  return { C, LEVEL_RATING, mastery, ratingPercentile, RATING_99, targetSeconds, course, activateCourse, buildFocus, focusStatus, learnerProfile, scoreProjection, weeklyReport, tagMistake, mistakeSummary, ERROR_TYPES, estimatePercentile, todayKey, dayOf, ratingFor, targetLevel, practiceBatch, diagnosticBatch, hintFor, STRATEGY, sm2, scheduleReview, recordAttempt, recommendTier, buildMock, scoreMock, progressSummary, buildPlan, markDone, BADGES, checkBadges, badgeList, publicStats, xpFor, xpSince, levelFor, xpForLevel, streakOf, dueCount, tutorName, builtinReply, tutorSystemPrompt };
+  return { C, LEVEL_RATING, mastery, ratingPercentile, RATING_99, targetSeconds, rulesFor, stanine, miniPlan, MINI_SECONDS, DAILY_MIN, studyMinutes, fullDay, fullStreakOf, addStudyTime, extendDay, course, activateCourse, buildFocus, focusStatus, learnerProfile, scoreProjection, weeklyReport, tagMistake, mistakeSummary, ERROR_TYPES, estimatePercentile, todayKey, dayOf, ratingFor, targetLevel, practiceBatch, diagnosticBatch, hintFor, STRATEGY, sm2, scheduleReview, recordAttempt, recommendTier, buildMock, scoreMock, progressSummary, buildPlan, markDone, BADGES, checkBadges, badgeList, publicStats, xpFor, xpSince, levelFor, xpForLevel, streakOf, dueCount, tutorName, builtinReply, tutorSystemPrompt };
 })();

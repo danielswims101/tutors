@@ -38,6 +38,8 @@ Every student's default goal is the 99th percentile, and the site is organized a
 - **Pace targets.** Every practice question shows the real test's seconds-per-question; your pace per section is tracked and diagnosed.
 - **Weekly report.** This week vs last week, mastery deltas, mocks, focus progress, projection, all in one page you can copy for a parent.
 - **Elite drills.** Once a skill passes 85% mastery the plan schedules level-5 drills for it, and mock recommendations move to Advanced and Elite tiers.
+- **Daily mini tests at real pace.** A 20-minute test every day with every scored section represented, where each section gets exactly the real test's seconds per question (HSPT Verbal 16 s, ISEE Quantitative 57 s, and so on), so pacing is rehearsed daily, not just on mock days.
+- **A 60-minute daily minimum.** Study time is measured while the student is actually working on the site. Each day's plan sums to at least 60 minutes, the day only counts as complete at 60, extra work is added automatically if the steps run out early, and the streak counts only full-hour days.
 - **Unlimited flashcards and trainers.** Vocabulary quizzes in six formats across 920 words, a word-parts deck, math-facts decks, custom decks you type or paste, math speed sprints, and an endless math skill ladder.
 
 ## What a student gets
@@ -49,7 +51,7 @@ Every student's default goal is the 99th percentile, and the site is organized a
 | **Study plan** | Day-by-day to the test date (or six weeks by default): weakest skills first, weekly mocks, taper before test day. Rebuilds on demand. |
 | **Lessons** | Forty-six: concept, method, worked think-aloud, scaffolded try, traps, retrieval check. |
 | **Practice** | Adaptive sets with Elo-style skill ratings (about 70% success), a three-level hint ladder, confidence ratings, and "ask why" on every question. |
-| **Mock tests** | Official timing, order and counts for HSPT, SSAT (Elementary/Middle/Upper) and ISEE (Lower/Middle/Upper) at four difficulty tiers. Server-side timers. Full review with explanations. |
+| **Mock tests** | Audited against the test makers' published specs: official section order, counts and timing for HSPT, SSAT (Elementary/Middle/Upper) and ISEE (Lower/Middle/Upper); scheduled breaks; the SSAT experimental section and choice of two writing prompts; per-level rules (SSAT Elementary: 4 choices, no penalty); HSPT question-type mixes from the STS Interpretive Manual; ISEE comparisons last and 5×5 / 6×6 passage structure; difficulty centered on each level; four tiers; full, half, single-section and 20-minute mini formats; a test-day mode with no palette, no countdown and no early submit; results with estimated percentiles and stanines. |
 | **Review** | SM-2 spaced repetition of misses and vocabulary flashcards. |
 | **Writing** | Timed prompts, self-scoring rubric, structural feedback; rubric grading and a rewritten opening with the live tutor. |
 | **Progress** | Mastery per skill and section, trends, mock history, badges. Parents see linked students read-only. |
