@@ -80,5 +80,24 @@ for (const [f, m] of mods) {
     }
   }
 }
+const allQ = new Map(); for (const [, m] of mods) for (const q of (m.questions || [])) allQ.set(q.id, q);
+for (const [f, m] of mods) if (m.choice5) {
+  counts.choice5 = Object.keys(m.choice5).length;
+  for (const [id, extra] of Object.entries(m.choice5)) {
+    const q = allQ.get(id); const where = `${f} choice5 ${id}`;
+    if (!q) { err(`${where}: unknown question id`); continue; }
+    if (q.test !== 'all' || !q.passageId) err(`${where}: fifth choices are only for shared (test 'all') passage questions`);
+    if (typeof extra !== 'string' || !extra.trim()) err(`${where}: must be a non-empty string`);
+    else if (q.choices.some(c => String(c).trim().toLowerCase() === extra.trim().toLowerCase())) err(`${where}: duplicates an existing choice`);
+  }
+  for (const q of allQ.values()) if (q.test === 'all' && q.passageId && !(q.id in m.choice5)) err(`${f}: missing fifth choice for ${q.id}`);
+}
+for (const [f, m] of mods) for (const p of (m.writingPrompts || [])) {
+  const where = `${f} prompt ${p.id || '(no id)'}`;
+  if (!p.id) err(`${where}: missing id`); else if (ids.has(p.id)) err(`${where}: duplicate id`); else ids.add(p.id);
+  if (!TESTS.has(p.test)) err(`${where}: bad test`);
+  if (!p.prompt || !p.minutes || !(p.level >= 1 && p.level <= 5)) err(`${where}: needs prompt, minutes, level 1-5`);
+  if (p.type === 'picture' && (!p.scene || !p.description)) err(`${where}: picture prompts need scene and description`);
+}
 console.log('Counts:', counts);
 if (errors) { console.error(`${errors} error(s)`); process.exit(1); } else console.log('All content valid.');

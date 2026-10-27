@@ -52,7 +52,7 @@ const BLUEPRINTS = {
       { section: 'quant', count: 30, minutes: 30, mix: { arithmetic: 8, 'fractions-decimals': 6, 'percent-ratio': 3, algebra: 3, geometry: 4, 'data-stats': 3, 'word-problems': 3 } },
       { section: 'verbal', count: 30, minutes: 20, mix: { synonyms: 15, analogies: 15 } },
       { section: 'break', minutes: 15, break: true },
-      { section: 'reading', count: 28, minutes: 30, passages: 28, perPassage: 7 },
+      { section: 'reading', count: 28, minutes: 30, passages: 28, perPassage: 4 },
       { section: 'writing', count: 1, minutes: 15, writing: true },
       { section: 'experimental', count: 16, minutes: 15, experimental: true, mix: { synonyms: 3, analogies: 3, arithmetic: 2, 'word-problems': 2, 'fractions-decimals': 1 }, passages: 5 }
     ],

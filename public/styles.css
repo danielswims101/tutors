@@ -192,3 +192,6 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; } .tbl th {
 /* installed-app (standalone) tweaks */
 @media (display-mode: standalone) { .main { padding-top: calc(28px + env(safe-area-inset-top)); } .bottom-nav { padding-bottom: calc(10px + env(safe-area-inset-bottom)); } .land-nav { padding-top: env(safe-area-inset-top); } }
 @media (max-width: 900px) { .sect .card.navy { grid-template-columns: 1fr !important; } }
+
+.picture-card { border: 1px solid var(--border); border-radius: 16px; padding: 18px; background: var(--surface-2); text-align: center; margin-bottom: 12px; }
+.picture-card .scene, .scene { font-size: 56px; line-height: 1.2; letter-spacing: 6px; }
