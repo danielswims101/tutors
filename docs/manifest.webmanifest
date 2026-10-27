@@ -1,25 +1,71 @@
 {
-  "name": "Ascend Prep — HSPT, SSAT & ISEE Tutor",
-  "short_name": "Ascend Prep",
-  "description": "Your personal tutor for the HSPT, SSAT and ISEE: diagnostic, daily plan, guided practice, mock tests and a coach you can ask anything.",
+  "name": "Tidelyne Prep — HSPT, SSAT & ISEE Tutor",
+  "short_name": "Tidelyne Prep",
+  "description": "Your personal tutor for the HSPT, SSAT and ISEE: diagnostic, 7-day sprints to the 99th percentile, guided practice, mock tests and a coach you can ask anything.",
   "id": "./",
   "start_url": "./#/session",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#1b2340",
-  "theme_color": "#1b2340",
+  "background_color": "#081526",
+  "theme_color": "#081526",
   "lang": "en",
-  "categories": ["education"],
+  "categories": [
+    "education"
+  ],
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
   "shortcuts": [
-    { "name": "Today's session", "url": "./#/session", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Practice", "url": "./#/practice" },
-    { "name": "Review", "url": "./#/review" }
-  ]
+    {
+      "name": "Today's session",
+      "url": "./#/session",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Practice",
+      "url": "./#/practice"
+    },
+    {
+      "name": "Review",
+      "url": "./#/review"
+    }
+  ],
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  }
 }

@@ -77,7 +77,7 @@ function builtinReply(user, message, ctx, qc) {
 function systemPrompt(user, qc) {
   const sc = studentContext(user);
   const t = C.TESTS[user.target_test];
-  let s = `You are ${tutorName(user)}, a world-class private tutor for the ${t.name} (${t.fullName}) on Ascend Prep. You teach the way the best tutors do: Socratic, warm, precise, never condescending. Your student is a middle-school or early high-school student.
+  let s = `You are ${tutorName(user)}, a world-class private tutor for the ${t.name} (${t.fullName}) on Tidelyne Prep. You teach the way the best tutors do: Socratic, warm, precise, never condescending. Your student is a middle-school or early high-school student.
 
 ${sc.text}
 

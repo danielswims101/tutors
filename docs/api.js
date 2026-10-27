@@ -9,16 +9,91 @@ window.AscendAPI = (function () {
   const stripAnswer = (q) => { const { answer, explanation, ...rest } = q; return rest; };
   const nowIso = () => new Date().toISOString();
 
-  // ---- persistence (debounced) ----
-  const dirty = new Set(); let flushTimer = null; let publicDirty = false; let profileDirty = false;
+  // ---- persistence (debounced) and cross-device sync ----
+  // One account can be open on several devices (or tabs) at once. Every save is conditional on the row version this device
+  // last read (store.saveData); a conflict means another device saved first, so we pull its copy, merge, and save again.
+  // Devices also re-read the account on resume (tab visible, window focus, back online), once a minute while visible, and
+  // the moment another device pings over Realtime that it saved.
+  const DATA_COLS = ['ratings', 'daily', 'totals', 'seen', 'reviews', 'plan', 'lessons', 'badges', 'tutor', 'cards', 'training', 'courses'];
+  const dirty = new Set(); let flushTimer = null; let retryTimer = null; let publicDirty = false; let profileDirty = false; let saving = null; let pulling = null; let lastPull = 0; let unsubscribe = null; let pokeTimer = null;
+  const toast = (m) => { if (window.AscendApp && window.AscendApp.toast) window.AscendApp.toast(m); };
   function mark(...cols) { for (const c of cols) dirty.add(c); if (['ratings', 'daily', 'badges', 'totals'].some(c => cols.includes(c))) publicDirty = true; clearTimeout(flushTimer); flushTimer = setTimeout(flush, 900); }
-  async function flush() { clearTimeout(flushTimer); if (!U) return; const cols = [...dirty]; dirty.clear(); try { if (cols.length) await store.saveData(U.uid, U.S, cols); if (profileDirty) { profileDirty = false; await store.saveProfile(U.uid, U.profile); } if (publicDirty) { publicDirty = false; await store.savePublic(U.uid, A.publicStats(U.S)); } } catch (e) { console.error('save failed', e); cols.forEach(c => dirty.add(c)); window.AscendApp && window.AscendApp.toast && window.AscendApp.toast('Could not save progress: ' + e.message); } }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });
+  async function flush() { clearTimeout(flushTimer); if (!U) return; while (saving) { try { await saving; } catch {} } if (!U || (!dirty.size && !profileDirty && !publicDirty)) return; saving = doFlush().finally(() => { saving = null; }); return saving; }
+  async function doFlush() {
+    const u = U; const cols = [...dirty]; dirty.clear();
+    try {
+      if (cols.length) {
+        let res = await store.saveData(u.uid, u.S, cols, u.version);
+        if (res && res.conflict) { await pullFrom(u, cols); res = await store.saveData(u.uid, u.S, DATA_COLS, u.version); }
+        if (res && res.conflict) throw new Error('Another device saved at the same moment.');
+        if (res && res.version !== undefined) u.version = res.version;
+        if (store.signal) store.signal({ v: u.version });
+      }
+      if (profileDirty) { profileDirty = false; await store.saveProfile(u.uid, u.profile); if (store.signal) store.signal({ profile: true }); }
+      if (publicDirty) { publicDirty = false; await store.savePublic(u.uid, A.publicStats(u.S)); }
+    } catch (e) { console.error('save failed', e); cols.forEach(c => dirty.add(c)); clearTimeout(retryTimer); retryTimer = setTimeout(flush, 15000); if (!/same moment/.test(e.message)) toast('Could not save progress: ' + e.message + ' Retrying shortly.'); }
+  }
+  // Merge rules for a column both devices changed: counters take the max, maps take the union, and per-item records keep
+  // whichever copy has more practice behind it. A column only one side changed simply takes that side (see applyRemote).
+  const later = (a, b) => String(a || '') >= String(b || '');
+  function mergeDeep(s, l) { if (s === undefined || s === null) return l; if (l === undefined || l === null) return s; if (Array.isArray(s) || Array.isArray(l)) { const ls = Array.isArray(l) ? l.length : -1, ss = Array.isArray(s) ? s.length : -1; return ls >= ss ? l : s; } if (typeof s === 'object' && typeof l === 'object') { const out = { ...s }; for (const k of Object.keys(l)) out[k] = mergeDeep(s[k], l[k]); return out; } if (typeof s === 'number' && typeof l === 'number') return Math.max(s, l); if (typeof s === 'boolean' && typeof l === 'boolean') return s || l; return l; }
+  function pickBy(s, l, score, tie) { const out = { ...(s || {}) }; for (const [k, lv] of Object.entries(l || {})) { const sv = out[k]; if (!sv || !lv) { out[k] = lv || sv; continue; } const a = score(lv), b = score(sv); out[k] = a > b || (a === b && later(tie(lv), tie(sv))) ? lv : sv; } return out; }
+  function unionBy(a, b, cap) { const seen = new Set(); const all = [...(b || []), ...(a || [])].filter(x => { const k = JSON.stringify(x); if (seen.has(k)) return false; seen.add(k); return true; }); all.sort((x, y) => String(y.at || '').localeCompare(String(x.at || ''))); return cap ? all.slice(0, cap) : all; }
+  function mergePlan(s, l) { if (!s || !l) return l || s; if (s.generatedAt !== l.generatedAt) return later(l.generatedAt, s.generatedAt) ? l : s; const days = (s.days || []).map(sd => { const ld = (l.days || []).find(d => d.date === sd.date); if (!ld) return sd; const items = sd.items.map((it, j) => ({ ...it, done: !!(it.done || (ld.items[j] && ld.items[j].label === it.label && ld.items[j].done)) })); for (const it of ld.items.slice(sd.items.length)) items.push(it); return { ...sd, items }; }); return { ...s, days }; }
+  function mergeCol(col, s, l) {
+    if (s === undefined || s === null) return l; if (l === undefined || l === null) return s;
+    switch (col) {
+      case 'ratings': { const out = {}; for (const test of new Set([...Object.keys(s), ...Object.keys(l)])) out[test] = pickBy(s[test], l[test], r => r.n || 0, r => r.updatedAt); return out; }
+      case 'reviews': return pickBy(s, l, r => (r.reps || 0) + (r.lapses || 0), r => r.due);
+      case 'lessons': return pickBy(s, l, v => v.status === 'completed' ? 1 : 0, v => v.completedAt);
+      case 'badges': { const out = { ...l }; for (const [k, v] of Object.entries(s)) if (!out[k] || String(v) < String(out[k])) out[k] = v; return out; }
+      case 'tutor': { const seen = new Set(); const all = [...s, ...l].filter(m => { const k = `${m.role}|${m.at || ''}|${m.content}`; if (seen.has(k)) return false; seen.add(k); return true; }); all.sort((x, y) => String(x.at || '').localeCompare(String(y.at || ''))); return all.slice(-60); }
+      case 'training': { const out = mergeDeep(s, l); if ((s.math && s.math.sprints) || (l.math && l.math.sprints)) out.math = { ...(out.math || {}), sprints: unionBy(s.math && s.math.sprints, l.math && l.math.sprints, 100) }; if (s.errors || l.errors) out.errors = unionBy(s.errors, l.errors, 600); return out; }
+      case 'courses': { const out = { ...s }; for (const [test, lc] of Object.entries(l)) { const sc = out[test]; out[test] = !sc ? lc : { ...sc, ...lc, diagnosticDone: !!(sc.diagnosticDone || lc.diagnosticDone), plan: mergePlan(sc.plan, lc.plan), focus: lc.focus && (!sc.focus || later(lc.focus.setAt, sc.focus.setAt)) ? lc.focus : sc.focus, enrolledAt: sc.enrolledAt || lc.enrolledAt }; } return out; }
+      case 'plan': return mergePlan(s, l);
+      default: return mergeDeep(s, l);
+    }
+  }
+  function applyRemote(u, r, localCols = []) {
+    const snapshot = () => JSON.stringify([u.S, u.profile, u.mocksIndex, u.writings.length, u.friends, u.students]);
+    const before = snapshot(); const local = new Set([...localCols, ...dirty]);
+    for (const c of DATA_COLS) { const rv = r.data[c]; if (local.has(c)) u.S[c] = mergeCol(c, rv, u.S[c]); else if (rv !== undefined) u.S[c] = rv; }
+    if (!profileDirty) u.profile = r.profile;
+    u.S.profile = u.profile; u.S.courses = u.S.courses || {}; u.S.training = u.S.training || {}; A.course(u.S, u.profile.targetTest); A.activateCourse(u.S, u.profile.targetTest);
+    u.mocksIndex = r.mocksIndex; u.writings = r.writings; u.friends = r.friends; u.students = r.students; u.viewers = r.viewers; if (r.version !== undefined) u.version = r.version;
+    return snapshot() !== before;
+  }
+  async function pullFrom(u, localCols) { const r = await store.loadUser(u.uid); if (U !== u) return false; lastPull = Date.now(); return applyRemote(u, r, localCols); }
+  // pull(): re-read this account from the server. 'check' first compares the row version (one tiny query) and stops if
+  // nothing changed; 'full' always re-reads, since mocks, writings and the profile carry no version.
+  async function pull(mode = 'full') {
+    if (!U || store.mode !== 'supabase') return false;
+    if (pulling) return pulling;
+    pulling = (async () => {
+      const u = U;
+      try {
+        while (saving) { try { await saving; } catch {} }
+        if (U !== u) return false;
+        if (mode === 'check') { const v = await store.dataVersion(u.uid); lastPull = Date.now(); if (v === u.version) return false; }
+        const changed = await pullFrom(u, []);
+        if (changed) { viewCache.clear(); window.dispatchEvent(new CustomEvent('ascend:sync')); }
+        return changed;
+      } catch (e) { console.warn('sync: could not refresh', e.message); return false; }
+    })();
+    try { return await pulling; } finally { pulling = null; }
+  }
+  function startSync(u) { stopSync(); lastPull = Date.now(); if (store.mode === 'supabase' && store.subscribe) unsubscribe = store.subscribe(u.uid, () => { clearTimeout(pokeTimer); pokeTimer = setTimeout(() => pull('full'), 1200); }); }
+  function stopSync() { if (unsubscribe) { try { unsubscribe(); } catch {} unsubscribe = null; } clearTimeout(pokeTimer); }
+  const resume = () => { if (U && document.visibilityState === 'visible' && Date.now() - lastPull > 15000) { viewCache.clear(); pull('full'); } };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); else resume(); });
+  window.addEventListener('focus', resume);
+  window.addEventListener('online', () => { Promise.resolve(flush()).then(() => pull('full')); });
   window.addEventListener('pagehide', flush);
+  setInterval(() => { if (U && document.visibilityState === 'visible') pull('check'); }, 60000);
 
-  async function loadUser(uid) { const r = await store.loadUser(uid); const S = r.data; S.profile = r.profile; S.courses = S.courses || {}; S.training = S.training || {}; A.course(S, r.profile.targetTest); A.activateCourse(S, r.profile.targetTest); return { uid, profile: r.profile, S, mocksIndex: r.mocksIndex, writings: r.writings, friends: r.friends, students: r.students, viewers: r.viewers }; }
+  async function loadUser(uid) { const r = await store.loadUser(uid); const S = r.data; S.profile = r.profile; S.courses = S.courses || {}; S.training = S.training || {}; A.course(S, r.profile.targetTest); A.activateCourse(S, r.profile.targetTest); return { uid, profile: r.profile, S, version: r.version === undefined ? null : r.version, mocksIndex: r.mocksIndex, writings: r.writings, friends: r.friends, students: r.students, viewers: r.viewers }; }
   function setPlan(u, plan) { u.S.plan = plan; A.course(u.S).plan = plan; mark('courses'); }
-  async function requireUser() { if (U) return U; const uid = await store.currentUserId(); if (!uid) throw new HttpError(401, 'Please sign in.'); U = await loadUser(uid); return U; }
+  async function requireUser() { if (U) return U; const uid = await store.currentUserId(); if (!uid) throw new HttpError(401, 'Please sign in.'); U = await loadUser(uid); startSync(U); return U; }
   async function viewTarget(query) { const u = await requireUser(); const sid = query.student; if (!sid) return u; if (!u.students.includes(sid) && u.profile.role !== 'admin') throw new HttpError(403, 'Not linked to that student.'); if (!viewCache.has(sid)) viewCache.set(sid, await loadUser(sid)); return viewCache.get(sid); }
   function publicUser(u) { const xp = A.xpFor(u.S); const level = A.levelFor(xp); const c = A.course(u.S); return { ...u.profile, variant: u.profile.variant || Object.keys(C.TESTS[u.profile.targetTest].variants)[0], diagnosticDone: !!c.diagnosticDone, goalPercentile: c.goalPercentile || 99, vocabLevel: c.vocabLevel || null, courses: Object.entries(u.S.courses || {}).map(([test, cc]) => ({ test, name: C.TESTS[test].name, variant: cc.variant, diagnosticDone: !!cc.diagnosticDone, testDate: cc.testDate || null, active: test === u.profile.targetTest })), tutorName: A.tutorName(u.S), xp, level, levelXp: A.xpForLevel(level), nextLevelXp: A.xpForLevel(level + 1) }; }
   function badgeCheck(u) { return A.checkBadges(u.S, { mocks: u.mocksIndex, writings: u.writings.length, friends: u.friends.length }); }
@@ -31,8 +106,8 @@ window.AscendAPI = (function () {
 
   route('POST', '/api/register', async ({ body }) => { await store.signUp(body); U = null; return publicUser(await requireUser()); });
   route('POST', '/api/login', async ({ body }) => { await store.signIn(body); U = null; return publicUser(await requireUser()); });
-  route('POST', '/api/logout', async () => { await flush(); await store.signOut(); U = null; viewCache.clear(); return { ok: true }; });
-  route('POST', '/api/logout-all', async () => { await flush(); await store.signOutAll(); U = null; return { ok: true }; });
+  route('POST', '/api/logout', async () => { await flush(); stopSync(); await store.signOut(); U = null; viewCache.clear(); return { ok: true }; });
+  route('POST', '/api/logout-all', async () => { await flush(); stopSync(); await store.signOutAll(); U = null; return { ok: true }; });
   route('GET', '/api/sessions', async () => ({ count: await store.sessionsCount() }));
   route('GET', '/api/me', async () => { try { return { user: publicUser(await requireUser()) }; } catch { return { user: null }; } });
   route('PATCH', '/api/me', async ({ body }) => {
@@ -87,8 +162,9 @@ window.AscendAPI = (function () {
   route('GET', '/api/session/today', async () => {
     const u = await requireUser(); if (!u.S.plan) setPlan(u, A.buildPlan(u.S)); const today = A.todayKey(); let day = u.S.plan.days.find(d => d.date === today); if (!day) { setPlan(u, A.buildPlan(u.S)); day = u.S.plan.days.find(d => d.date === today) || u.S.plan.days[0]; }
     const p = A.progressSummary(u.S, u.mocksIndex); if (day.items.every(i => i.done || i.type === 'rest') && p.minutesLeft > 0 && !day.items.some(i => i.type === 'rest')) { if (A.extendDay(u.S, day, p.minutesLeft)) mark('courses'); } const done = day.items.filter(i => i.done).length; const minutes = day.items.reduce((a, i) => a + (i.minutes || 0), 0); const weak = p.skills.filter(s => s.n >= 2).sort((a, b) => a.mastery - b.mastery)[0]; const daysLeft = u.S.plan.testDate ? Math.ceil((new Date(u.S.plan.testDate) - Date.now()) / 864e5) : null;
-    const allDone = day.items.every(i => i.done || i.type === 'rest'); const narration = !u.profile.diagnosticDone ? `Welcome, ${u.profile.displayName}. Before anything else, I want to see how you think. The diagnostic is twenty questions across every section; there is no score to worry about. It tells me where to start.` : allDone && p.minutesLeft > 0 ? `Steps done, but the day is not: ${p.todayMinutes} of 60 minutes so far. Sixty is the minimum; I have added work below to cover the last ${p.minutesLeft}.` : allDone ? `That is everything for today, ${u.profile.displayName}: ${p.todayMinutes} minutes, minimum met. ${p.streak} day${p.streak === 1 ? '' : 's'} in a row at 60 or more. Rest is part of the plan; I will see you tomorrow.` : `${p.streak >= 3 ? `Day ${p.streak} in a row. ` : ''}Today is about ${minutes} minutes${daysLeft ? `, with ${daysLeft} days to the test` : ''}. ${weak ? `We are chasing ${weak.name}; it is sitting at ${weak.mastery}% and it is where your next points are.` : 'Your plan starts broad and narrows as I learn what you need.'} ${p.due ? `Start with the ${p.due} review items; they are timed to land before you forget.` : 'Begin with the first step below.'}`;
-    return { date: day.date, phase: day.phase || null, phaseDesc: day.phase && u.S.plan.phases ? u.S.plan.phases[day.phase] : null, items: day.items, done, total: day.items.length, minutes, todayMinutes: p.todayMinutes, minutesLeft: p.minutesLeft, dailyMinimum: p.dailyMinimum, complete: allDone && p.minutesLeft === 0, narration, tutorName: A.tutorName(u.S), streak: p.streak, due: p.due, daysLeft, diagnosticDone: Boolean(u.profile.diagnosticDone), focus: A.focusStatus(u.S), course: C.TESTS[u.profile.targetTest].name };
+    const dayIndex = u.S.plan.days.findIndex(x => x.date === day.date); const sprint = u.S.plan.sprint ? { day: dayIndex + 1, of: u.S.plan.horizonDays } : null; const proj = A.scoreProjection(u.S, u.mocksIndex); const goalLine = sprint ? `Day ${sprint.day} of ${sprint.of} in your sprint to the ${proj.goal}th percentile${proj.overall !== null ? `; you are projecting about the ${proj.overall}th` : ''}. ` : '';
+    const allDone = day.items.every(i => i.done || i.type === 'rest'); const narration = !u.profile.diagnosticDone ? `Welcome, ${u.profile.displayName}. Before anything else, I want to see how you think. The diagnostic is twenty questions across every section; there is no score to worry about. It tells me where to start.` : allDone && p.minutesLeft > 0 ? `Steps done, but the day is not: ${p.todayMinutes} of 60 minutes so far. Sixty is the minimum; I have added work below to cover the last ${p.minutesLeft}.` : allDone ? `That is everything for today, ${u.profile.displayName}: ${p.todayMinutes} minutes, minimum met. ${p.streak} day${p.streak === 1 ? '' : 's'} in a row at 60 or more. Rest is part of the plan; I will see you tomorrow.` : `${goalLine}${p.streak >= 3 ? `Day ${p.streak} in a row. ` : ''}Today is about ${minutes} minutes${daysLeft ? `, with ${daysLeft} days to the test` : ''}. ${weak ? `We are chasing ${weak.name}; it is sitting at ${weak.mastery}% and it is where your next points are.` : 'Your plan starts broad and narrows as I learn what you need.'} ${p.due ? `Start with the ${p.due} review items; they are timed to land before you forget.` : 'Begin with the first step below.'}`;
+    return { date: day.date, sprint, projected: proj.overall, goal: proj.goal, phase: day.phase || null, phaseDesc: day.phase && u.S.plan.phases ? u.S.plan.phases[day.phase] : null, items: day.items, done, total: day.items.length, minutes, todayMinutes: p.todayMinutes, minutesLeft: p.minutesLeft, dailyMinimum: p.dailyMinimum, complete: allDone && p.minutesLeft === 0, narration, tutorName: A.tutorName(u.S), streak: p.streak, due: p.due, daysLeft, diagnosticDone: Boolean(u.profile.diagnosticDone), focus: A.focusStatus(u.S), course: C.TESTS[u.profile.targetTest].name };
   });
   // ---- mocks ----
   function mockState(m) { const bp = m.blueprint; const sec = bp.sections[m.section_index]; const startedMs = m.section_started_at ? new Date(m.section_started_at).getTime() : Date.now(); const secTotal = sec.seconds || Math.round(sec.minutes * 60); const remaining = Math.max(0, secTotal - Math.floor((Date.now() - startedMs) / 1000)); const resp = m.responses || {}; return { id: m.id, test: m.test, variant: m.variant, tier: m.tier, length: m.length, status: m.status, realism: !!bp.realism, sectionIndex: m.section_index, sectionCount: bp.sections.length, sections: bp.sections.map(s => ({ section: s.section, label: s.label, minutes: s.minutes, count: s.writing ? 1 : s.questions.length, writing: !!s.writing, break: !!s.break, experimental: !!s.experimental })), current: m.status === 'in_progress' ? { section: sec.section, label: sec.label, minutes: sec.minutes, seconds: secTotal, spq: sec.spq || null, writing: !!sec.writing, break: !!sec.break, breakNote: sec.note || null, experimental: !!sec.experimental, prompt: sec.prompt || null, promptAlt: sec.promptAlt || null, promptPick: (m.responses || {})[`p:${sec.section}`] || null, remaining, questions: sec.writing ? [] : sec.questions.map(stripAnswer), passages: sec.passages || {}, responses: Object.fromEntries(Object.entries(resp).filter(([k]) => sec.writing ? k === `w:${sec.section}` : sec.questions.some(q => q.id === k))) } : null }; }
@@ -193,5 +269,5 @@ window.AscendAPI = (function () {
     for (const r of routes) { if (r.method !== method) continue; const m = r.re.exec(pathname); if (!m) continue; return r.handler({ body: body || {}, params: m.groups || {}, query }); }
     throw new HttpError(404, 'Not found: ' + path);
   }
-  return { api, flush, mode: store.mode, get user() { return U; } };
+  return { api, flush, pull, mergeCol, mode: store.mode, get user() { return U; } }; // mergeCol is exposed for the sync tests
 })();

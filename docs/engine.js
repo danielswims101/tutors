@@ -1,5 +1,5 @@
 'use strict';
-/* Ascend Prep — the tutoring engine, running in the browser. Operates on a user state object S:
+/* Tidelyne Prep — the tutoring engine, running in the browser. Operates on a user state object S:
    S = { profile, ratings:{test:{skill:{rating,n,streak}}}, daily:{day:{n,right,secs}}, totals:{n,right,secs},
          seen:{qid:ts}, reviews:{key:item}, plan, lessons:{id:{status,score,completedAt}}, badges:{id:ts}, tutor:[...] } */
 window.Ascend = (function () {
@@ -205,26 +205,56 @@ window.Ascend = (function () {
     if (!lastMock || (Date.now() - new Date(lastMock.completed_at).getTime()) > 7 * 864e5) recs.push({ type: 'mock', title: lastMock ? 'Time for a mock test' : 'Take your first mock test', why: lastMock ? 'It has been over a week. Weekly timed practice keeps pacing sharp.' : 'A baseline mock tells us exactly where you stand.', action: { page: 'mock' } });
     return { test, skills, bySection, daily: daily.map(d => ({ ...d, minutes: studyMinutes(d), full: fullDay(d) })), totals: S.totals, recent, today, todayMinutes, dailyMinimum: DAILY_MIN, minutesLeft: Math.max(0, DAILY_MIN - todayMinutes), streak, activeStreak, due, mocks: mocksIndex, lessonsDone, recommendations: recs.slice(0, 4), tierRecommendation: recommendTier(S, test) };
   }
+  const SPRINT_DAYS = 7; const SPRINT_MIN = 90; // every week is a 7-day sprint to the 99th: about 90 planned minutes a day (60 is the enforced minimum)
+  // The plan is a 7-day sprint: Baseline (day 1), Attack (2-3), Checkpoint half mock (4), Elite (5-6), Prove-it full mock (7).
+  // When it runs out, the next sprint is written from the results. The last week before a dated test tapers instead.
   function buildPlan(S) {
     const test = S.profile.targetTest; const p = progressSummary(S);
-    let horizon = S.profile.testDate ? Math.ceil((new Date(S.profile.testDate) - Date.now()) / 864e5) : null; if (horizon === null || horizon < 7) horizon = horizon === null ? 42 : 7; horizon = Math.min(horizon, 120);
+    const toTest = S.profile.testDate ? Math.ceil((new Date(S.profile.testDate) - Date.now()) / 864e5) : null;
+    const sprint = toTest === null || toTest > SPRINT_DAYS; const horizon = sprint ? SPRINT_DAYS : Math.max(2, toTest);
     const done = new Set(p.lessonsDone.filter(l => l.status === 'completed').map(l => l.lesson_id));
     const skillOrder = p.skills.slice().sort((a, b) => a.mastery - b.mastery).map(s => s.skill); const allSkills = [...new Set(Object.values(C.SECTION_SKILLS[test]).flat())].filter(s => s !== 'writing'); for (const s of allSkills) if (!skillOrder.includes(s)) skillOrder.push(s);
     const lessonQueue = []; for (const s of skillOrder) lessonQueue.push(...C.lessons.filter(l => l.skill === s && (l.test === test || l.test === 'all') && !done.has(l.id))); for (const l of C.lessons) if ((l.test === test || l.test === 'all') && !done.has(l.id) && !lessonQueue.includes(l)) lessonQueue.push(l);
+    const strong = p.skills.filter(x => x.mastery >= 80).sort((a, b) => b.mastery - a.mastery);
     const hasWriting = test !== 'hspt'; const days = []; let li = 0; let di = 0; const start = new Date(); start.setHours(0, 0, 0, 0);
+    const nextLesson = () => { const lesson = lessonQueue[li]; if (!lesson) return null; li = (li + 1) % Math.max(1, lessonQueue.length); return { type: 'lesson', ref: lesson.id, label: `Lesson: ${lesson.title}`, minutes: lesson.minutes, skill: lesson.skill }; };
+    const weakDrill = () => { const skill = skillOrder[di % skillOrder.length]; di++; const sm = p.skills.find(x => x.skill === skill); const elite = sm && sm.mastery >= 85; return { type: 'drill', ref: skill, level: elite ? 5 : undefined, label: `${elite ? 'Elite drill' : 'Drill'}: ${C.SKILL_NAMES[skill]} (10 questions)`, minutes: 10 }; };
+    const eliteDrill = (i) => { const sk = strong[i % Math.max(1, strong.length)]; return sk ? { type: 'drill', ref: sk.skill, level: 5, label: `Elite drill: ${sk.name} (10 questions)`, minutes: 10 } : { type: 'drill', level: 5, label: 'Adaptive mix at Elite level (10 questions)', minutes: 10 }; };
+    const mini = () => ({ type: 'mini', label: 'Daily mini test: every section at real test pace (20 min)', minutes: 20, length: 'mini' });
+    const fillers = [{ type: 'flash', label: 'Flashcards: due cards and 10 new (10 min)', minutes: 10 }, { type: 'vocabquiz', label: 'Vocabulary quiz: 10 questions (8 min)', minutes: 8 }, { type: 'drill', label: 'Adaptive mix (10 questions)', minutes: 10 }, { type: 'sprint', label: 'Math speed sprint (5 min)', minutes: 5 }, { type: 'drill', label: 'Adaptive mix, round two (10 questions)', minutes: 10 }];
+    const fill = (items, target) => { let fi = 0; while (items.reduce((a, i) => a + (i.minutes || 0), 0) < target && fi < fillers.length) { const f = fillers[fi++]; if (!items.some(i => i.type === f.type && i.label === f.label)) items.push({ ...f }); } };
     for (let d = 0; d < horizon; d++) {
-      const date = dayOf(new Date(start.getTime() + d * 864e5 + 12 * 3600e3)); const items = []; const daysLeft = horizon - d;
-      if (d === 0 && !S.profile.diagnosticDone) items.push({ type: 'diagnostic', label: 'Diagnostic: 20 questions to calibrate your plan', minutes: 15 });
-      items.push({ type: 'review', label: 'Spaced review (what is due)', minutes: 8 });
-      if (d > 0 && d % 7 === 6 && daysLeft > 0) { items.push({ type: 'mock', label: d < 14 ? 'Half-length mock test' : 'Full-length mock test', minutes: d < 14 ? 75 : 150, length: d < 14 ? 'half' : 'full' }); }
-      else { if (d > 0 || S.profile.diagnosticDone) items.push({ type: 'mini', label: 'Daily mini test: every section at real test pace (20 min)', minutes: 20, length: 'mini' }); const lesson = lessonQueue[li]; if (lesson) { items.push({ type: 'lesson', ref: lesson.id, label: `Lesson: ${lesson.title}`, minutes: lesson.minutes, skill: lesson.skill }); li = (li + 1) % Math.max(1, lessonQueue.length); } const skill = skillOrder[di % skillOrder.length]; di++; const sm = p.skills.find(x => x.skill === skill); const elite = sm && sm.mastery >= 85; items.push({ type: 'drill', ref: skill, level: elite ? 5 : undefined, label: `${elite ? 'Elite drill' : 'Drill'}: ${C.SKILL_NAMES[skill]} (10 questions)`, minutes: 10 }); if (d % 2 === 1) items.push({ type: 'drill', label: 'Adaptive mix (10 questions)', minutes: 10 }); if (d >= horizon / 3 && d % 3 === 2) { const strong = p.skills.filter(x => x.mastery >= 80).sort((a, b) => b.mastery - a.mastery)[d % Math.max(1, p.skills.filter(x => x.mastery >= 80).length)]; if (strong) items.push({ type: 'drill', ref: strong.skill, level: 5, label: `Elite drill: ${strong.name} (10 questions)`, minutes: 10 }); } if (hasWriting && d % 7 === 3) items.push({ type: 'writing', label: 'Timed writing practice', minutes: 25 }); items.push({ type: 'vocab', label: 'Vocabulary: 10 new words', minutes: 5 }); }
-      const fillers = [{ type: 'flash', label: 'Flashcards: due cards and 10 new (10 min)', minutes: 10 }, { type: 'vocabquiz', label: 'Vocabulary quiz: 10 questions (8 min)', minutes: 8 }, { type: 'drill', label: 'Adaptive mix (10 questions)', minutes: 10 }, { type: 'sprint', label: 'Math speed sprint (5 min)', minutes: 5 }];
-      let fi = 0; while (items.reduce((a, i) => a + (i.minutes || 0), 0) < DAILY_MIN && fi < fillers.length) { const f = fillers[fi++]; if (!items.some(i => i.type === f.type && i.label === f.label)) items.push({ ...f }); }
-      if (daysLeft === 1) items.splice(0, items.length, { type: 'review', label: 'Light review only: due items and your error log', minutes: 15 }, { type: 'flash', label: 'Flashcards: your weakest 30 cards', minutes: 15 }, { type: 'mini', label: 'One mini test at real pace, then stop', minutes: 20, length: 'mini' }, { type: 'rest', label: 'Rest. Pack two pencils, a snack and your admission ticket. Sleep early.', minutes: 0 });
-      const phase = horizon <= 10 ? 'Rehearsal' : d < horizon / 3 ? 'Foundations' : d < horizon * 2 / 3 ? 'Build' : 'Rehearsal';
+      const date = dayOf(new Date(start.getTime() + d * 864e5 + 12 * 3600e3)); const items = []; const daysLeft = horizon - d; let phase;
+      if (sprint) {
+        phase = d === 0 ? 'Baseline' : d <= 2 ? 'Attack' : d === 3 ? 'Checkpoint' : d <= 5 ? 'Elite' : 'Prove it';
+        if (d === 0 && !S.profile.diagnosticDone) items.push({ type: 'diagnostic', label: 'Diagnostic: 20 questions to calibrate your sprint', minutes: 15 });
+        items.push({ type: 'review', label: 'Spaced review (what is due)', minutes: 8 });
+        if (d === 3) { items.push({ type: 'mock', label: 'Checkpoint: half-length mock test at real pace', minutes: 75, length: 'half' }, { type: 'vocab', label: 'Vocabulary: 10 new words', minutes: 5 }); fill(items, SPRINT_MIN); }
+        else if (d === 6) { items.push({ type: 'mock', label: 'Prove it: full-length mock test, Elite tier', minutes: 150, length: 'full' }); }
+        else {
+          if (d > 0 || S.profile.diagnosticDone) items.push(mini());
+          const lesson = nextLesson(); if (lesson) items.push(lesson);
+          items.push(weakDrill());
+          items.push(d >= 4 ? eliteDrill(d) : { type: 'drill', label: 'Adaptive mix (10 questions)', minutes: 10 });
+          if (hasWriting && (d === 2 || d === 5)) items.push({ type: 'writing', label: 'Timed writing practice', minutes: 25 });
+          items.push({ type: 'vocab', label: 'Vocabulary: 10 new words', minutes: 5 });
+          fill(items, SPRINT_MIN);
+        }
+      } else {
+        phase = 'Taper';
+        items.push({ type: 'review', label: 'Spaced review (what is due)', minutes: 8 });
+        if (daysLeft === 1) items.push({ type: 'flash', label: 'Flashcards: your weakest 30 cards', minutes: 15 }, mini(), { type: 'rest', label: 'Rest. Pack two pencils, a snack and your admission ticket. Sleep early.', minutes: 0 });
+        else {
+          items.push(mini());
+          if (d === 0 && daysLeft >= 4) items.push({ type: 'mock', label: 'Full-length mock test, Elite tier', minutes: 150, length: 'full' });
+          else { items.push(weakDrill(), eliteDrill(d)); const lesson = nextLesson(); if (lesson && daysLeft > 2) items.push(lesson); }
+          items.push({ type: 'vocab', label: 'Vocabulary: review your hardest words', minutes: 5 }); fill(items, DAILY_MIN);
+        }
+      }
       days.push({ date, phase, items: items.map(it => ({ ...it, done: false })) });
     }
-    return { test, generatedAt: nowIso(), horizonDays: horizon, testDate: S.profile.testDate || null, phases: { Foundations: 'Fix the weakest skills with lessons and short drills.', Build: 'Broaden: every section, harder levels, weekly mocks.', Rehearsal: 'Timing, pacing and full-length rehearsal. Taper before test day.' }, days };
+    const phases = sprint ? { Baseline: 'Measure where you stand today, then start on the weakest skill.', Attack: 'Lessons and drills on your weakest skills, plus a mini test at real pace every day.', Checkpoint: 'A half-length mock at real pace to see how far the first three days moved you.', Elite: 'Push your strongest sections to Elite level while the weak ones keep climbing.', 'Prove it': 'A full-length Elite mock. Score it, read every explanation, and the next sprint starts from what it shows.' } : { Taper: 'Test week: timing, pacing and review. No new material; sleep and confidence matter more now.' };
+    return { test, generatedAt: nowIso(), horizonDays: horizon, sprint, goal: course(S).goalPercentile || 99, testDate: S.profile.testDate || null, phases, days };
   }
   function extendDay(S, day, minutesNeeded) {
     const extras = [{ type: 'mini', label: 'Extra: mini test at real pace (20 min)', minutes: 20, length: 'mini' }, { type: 'drill', label: 'Extra: adaptive mix (10 questions)', minutes: 10 }, { type: 'flash', label: 'Extra: flashcards (10 min)', minutes: 10 }, { type: 'vocabquiz', label: 'Extra: vocabulary quiz (8 min)', minutes: 8 }, { type: 'sprint', label: 'Extra: math speed sprint (5 min)', minutes: 5 }, { type: 'review', label: 'Extra: spaced review (8 min)', minutes: 8 }];
@@ -274,7 +304,7 @@ window.Ascend = (function () {
   }
   function tutorSystemPrompt(S, p, qc) {
     const sc = studentContextText(S, p); const t = C.TESTS[S.profile.targetTest];
-    let s = `You are ${tutorName(S)}, a world-class private tutor for the ${t.name} (${t.fullName}) on Ascend Prep. You teach the way the best tutors do: Socratic, warm, precise, never condescending. Your student is a middle-school or early high-school student.\n\n${sc.text}\n\nTest facts: ${t.penalty ? 'SSAT: wrong answers cost 1/4 point, blanks cost nothing.' : `${t.name}: no guessing penalty.`} Sections: ${Object.values(t.sections).join(', ')}.\n\nHow you teach:\n- Keep replies short (under 120 words) unless the student asks for a full walkthrough. One idea at a time. Ask a guiding question when it helps the student think.\n- If a current question is provided and the student has NOT answered it yet, never reveal the correct answer or the letter. Give the method, then a narrowing hint, then eliminate one choice. Only after they answer, explain fully.\n- When explaining, name the skill, the method, and the trap. End with one sentence they can reuse on similar questions.\n- Use plain language. Light markdown only (bold, short lists). No headings.\n- Encourage effort over talent. Never shame a wrong answer. Stay on the topic of test preparation and study skills.`;
+    let s = `You are ${tutorName(S)}, a world-class private tutor for the ${t.name} (${t.fullName}) on Tidelyne Prep. You teach the way the best tutors do: Socratic, warm, precise, never condescending. Your student is a middle-school or early high-school student. Their goal is the ${course(S).goalPercentile || 99}th percentile, chased in 7-day sprints of at least 60 minutes a day; every sprint ends with a full-length mock test.\n\n${sc.text}\n\nTest facts: ${t.penalty ? 'SSAT: wrong answers cost 1/4 point, blanks cost nothing.' : `${t.name}: no guessing penalty.`} Sections: ${Object.values(t.sections).join(', ')}.\n\nHow you teach:\n- Keep replies short (under 120 words) unless the student asks for a full walkthrough. One idea at a time. Ask a guiding question when it helps the student think.\n- If a current question is provided and the student has NOT answered it yet, never reveal the correct answer or the letter. Give the method, then a narrowing hint, then eliminate one choice. Only after they answer, explain fully.\n- When explaining, name the skill, the method, and the trap. End with one sentence they can reuse on similar questions.\n- Use plain language. Light markdown only (bold, short lists). No headings.\n- Encourage effort over talent. Never shame a wrong answer. Stay on the topic of test preparation and study skills.`;
     if (qc) s += `\n\nCURRENT QUESTION (skill: ${C.SKILL_NAMES[qc.q.skill]}, level ${qc.q.level}/5):\n${qc.passage ? 'PASSAGE: ' + qc.passage.title + '\n' + qc.passage.text + '\n\n' : ''}${qc.q.stem}\nChoices: ${qc.q.choices.map((c, i) => `${'ABCDE'[i]}) ${c}`).join('  ')}\nCorrect answer: ${'ABCDE'[qc.q.answer]}\nOfficial explanation: ${qc.q.explanation}\nStudent status: ${qc.answered ? `answered ${qc.choice !== null ? 'ABCDE'[qc.choice] : 'nothing'} (${qc.choice === qc.q.answer ? 'correct' : 'incorrect'}); you may explain fully now.` : 'has NOT answered yet; do not reveal the answer.'}`;
     return s;
   }
@@ -288,7 +318,7 @@ window.Ascend = (function () {
   function course(S, test) { test = test || S.profile.targetTest; S.courses = S.courses || {}; if (!S.courses[test]) { const first = Object.keys(S.courses).length === 0; S.courses[test] = { variant: (test === S.profile.targetTest && S.profile.variant) || Object.keys(C.TESTS[test].variants)[0], testDate: first ? (S.profile.testDate || null) : null, diagnosticDone: first ? !!S.profile.diagnosticDone : false, plan: first ? (S.plan || null) : null, focus: null, enrolledAt: nowIso() }; } return S.courses[test]; }
   function activateCourse(S, test) { const c = course(S, test); S.profile.targetTest = test; S.profile.variant = c.variant; S.profile.testDate = c.testDate || null; S.profile.diagnosticDone = !!c.diagnosticDone; S.plan = c.plan || null; return c; }
   // ---- focus skills with targets ----
-  function buildFocus(S) { const test = S.profile.targetTest; const R = S.ratings[test] || {}; const rated = Object.entries(R).filter(([, r]) => r.n >= 2).map(([skill, r]) => ({ skill, name: C.SKILL_NAMES[skill], start: mastery(r.rating) })).sort((a, b) => a.start - b.start).slice(0, 3); const until = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10); return { setAt: nowIso(), until, skills: rated.map(s => ({ ...s, target: Math.min(92, s.start + 15) })) }; }
+  function buildFocus(S) { const test = S.profile.targetTest; const R = S.ratings[test] || {}; const rated = Object.entries(R).filter(([, r]) => r.n >= 2).map(([skill, r]) => ({ skill, name: C.SKILL_NAMES[skill], start: mastery(r.rating) })).sort((a, b) => a.start - b.start).slice(0, 3); const until = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10); return { setAt: nowIso(), until, skills: rated.map(s => ({ ...s, target: Math.min(92, s.start + 15) })) }; }
   function focusStatus(S) { const c = course(S); let f = c.focus; const R = S.ratings[S.profile.targetTest] || {}; if (!f || !f.skills.length || f.until < todayKey()) { if (Object.values(R).some(r => r.n >= 2)) { f = c.focus = buildFocus(S); } else return null; } const skills = f.skills.map(s => { const r = R[s.skill]; const now = r ? mastery(r.rating) : s.start; return { ...s, now, done: now >= s.target, pct: Math.max(0, Math.min(100, Math.round((now - s.start) / Math.max(1, s.target - s.start) * 100))) }; }); if (skills.length && skills.every(s => s.done)) { f = c.focus = buildFocus(S); return focusStatus(S); } return { ...f, skills, daysLeft: Math.max(0, Math.ceil((new Date(f.until + 'T23:59:59') - Date.now()) / 864e5)) }; }
   // ---- learner profile ----
   function learnerProfile(S, mocksIndex = []) {
@@ -335,7 +365,7 @@ window.Ascend = (function () {
     const mocks = mocksIndex.filter(m => m.status === 'completed' && m.completed_at && new Date(m.completed_at) >= w1).map(m => ({ id: m.id, at: m.completed_at, pct: m.results.pct, percentile: m.results.percentile }));
     const lessons = Object.values(S.lessons).filter(l => l.status === 'completed' && l.completedAt && new Date(l.completedAt) >= w1).length;
     const focus = focusStatus(S); const proj = scoreProjection(S, mocksIndex);
-    const lines = [`Ascend Prep weekly report for ${S.profile.displayName} (${C.TESTS[test].name})`, `This week: ${thisWeek.n} questions at ${thisWeek.acc === null ? '—' : thisWeek.acc + '%'} accuracy, ${thisWeek.secs} study minutes, ${thisWeek.full} of 7 days met the 60-minute minimum, ${lessons} lessons, ${mocks.length} mock test${mocks.length === 1 ? '' : 's'}.`, `Last week: ${lastWeek.n} questions at ${lastWeek.acc === null ? '—' : lastWeek.acc + '%'}.`];
+    const lines = [`Tidelyne Prep weekly report for ${S.profile.displayName} (${C.TESTS[test].name})`, `This week: ${thisWeek.n} questions at ${thisWeek.acc === null ? '—' : thisWeek.acc + '%'} accuracy, ${thisWeek.secs} study minutes, ${thisWeek.full} of 7 days met the 60-minute minimum, ${lessons} lessons, ${mocks.length} mock test${mocks.length === 1 ? '' : 's'}.`, `Last week: ${lastWeek.n} questions at ${lastWeek.acc === null ? '—' : lastWeek.acc + '%'}.`];
     const up = deltas.filter(d => d.delta !== null && d.delta > 0).slice(0, 3); const down = deltas.filter(d => d.delta !== null && d.delta < 0).slice(-2);
     if (up.length) lines.push(`Improved: ${up.map(d => `${d.name} +${d.delta}`).join(', ')}.`); if (down.length) lines.push(`Slipped: ${down.map(d => `${d.name} ${d.delta}`).join(', ')}.`);
     if (proj.overall !== null) lines.push(`Projected overall: ${proj.overall}th percentile (goal ${proj.goal}th).`);

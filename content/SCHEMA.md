@@ -1,4 +1,4 @@
-# Content schema (Ascend Prep)
+# Content schema (Tidelyne Prep)
 
 All content files are CommonJS modules under `content/` and export plain data.
 Run `node scripts/validate-content.js` to check every file.

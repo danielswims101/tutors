@@ -1,5 +1,5 @@
 'use strict';
-/* Ascend Prep data store. Two backends with one interface:
+/* Tidelyne Prep data store. Two backends with one interface:
    - Supabase (accounts that work on every device) when docs/config.js has SUPABASE_URL + SUPABASE_ANON_KEY
    - Local (this browser only) otherwise, so the site still works before Supabase is configured. */
 window.AscendStore = (function () {
@@ -17,6 +17,7 @@ window.AscendStore = (function () {
   // ---------------- Supabase backend ----------------
   function supabaseBackend() {
     const sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+    let syncChannel = null;
     const fnUrl = (name) => `${cfg.SUPABASE_URL.replace(/\/$/, '')}/functions/v1/${name}`;
     const errOf = (e) => { const m = (e && (e.message || e.error_description || e.error)) || String(e); if (/invalid login credentials/i.test(m)) return 'Incorrect username or password.'; if (/already registered|already exists|duplicate/i.test(m)) return 'That username is taken.'; return m; };
     async function authHeaders() { const { data } = await sb.auth.getSession(); return { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session ? data.session.access_token : cfg.SUPABASE_ANON_KEY}`, apikey: cfg.SUPABASE_ANON_KEY }; }
@@ -41,9 +42,32 @@ window.AscendStore = (function () {
           sb.from('friendships').select('friend_id').eq('user_id', uid), sb.from('links').select('student_id,parent_id').or(`parent_id.eq.${uid},student_id.eq.${uid}`)]);
         if (e1 || !prof) throw new Error('Profile not found. Please sign in again.');
         const data = emptyData(); if (dat) for (const c of DATA_COLS) if (dat[c] !== null && dat[c] !== undefined) data[c] = dat[c];
-        return { profile: profileFromRow(prof), data, mocksIndex: (mocks || []).map(m => ({ ...m, results: m.results ? { pct: m.results.pct, percentile: m.results.percentile, totalRight: m.results.totalRight, totalCount: m.results.totalCount, sections: (m.results.sections || []).map(s => ({ label: s.label, pct: s.pct, percentile: s.percentile, right: s.right, count: s.count, writing: s.writing })) } : null })), writings: (writings || []).map(w => ({ id: w.id, promptId: w.prompt_id, text: w.text, wordCount: w.word_count, minutes: w.minutes, selfScores: w.self_scores, createdAt: w.created_at })), friends: (fr || []).map(f => f.friend_id), students: (lk || []).filter(l => l.parent_id === uid).map(l => l.student_id), viewers: (lk || []).filter(l => l.student_id === uid).map(l => l.parent_id) };
+        return { profile: profileFromRow(prof), data, version: dat ? (dat.version || 0) : null, mocksIndex: (mocks || []).map(m => ({ ...m, results: m.results ? { pct: m.results.pct, percentile: m.results.percentile, totalRight: m.results.totalRight, totalCount: m.results.totalCount, sections: (m.results.sections || []).map(s => ({ label: s.label, pct: s.pct, percentile: s.percentile, right: s.right, count: s.count, writing: s.writing })) } : null })), writings: (writings || []).map(w => ({ id: w.id, promptId: w.prompt_id, text: w.text, wordCount: w.word_count, minutes: w.minutes, selfScores: w.self_scores, createdAt: w.created_at })), friends: (fr || []).map(f => f.friend_id), students: (lk || []).filter(l => l.parent_id === uid).map(l => l.student_id), viewers: (lk || []).filter(l => l.student_id === uid).map(l => l.parent_id) };
       },
-      async saveData(uid, data, cols) { const patch = { user_id: uid, updated_at: new Date().toISOString() }; for (const c of cols) patch[c] = data[c]; const { error } = await sb.from('user_data').upsert(patch, { onConflict: 'user_id' }); if (error) throw new Error(errOf(error)); },
+      // Optimistic concurrency: every user_data row carries a version that a database trigger bumps on each update. A save
+      // only lands if the version it was based on is still current; otherwise it reports a conflict and the caller merges the
+      // newer copy first. This is what lets one account be open on several devices without one overwriting the other.
+      async saveData(uid, data, cols, version) {
+        const patch = {}; for (const c of cols) patch[c] = data[c];
+        if (version === null || version === undefined) {
+          const { data: row, error } = await sb.from('user_data').insert({ user_id: uid, ...patch }).select('version').single();
+          if (error) { if (error.code === '23505' || /duplicate/i.test(error.message || '')) return { conflict: true }; throw new Error(errOf(error)); }
+          return { version: row.version };
+        }
+        const { data: rows, error } = await sb.from('user_data').update(patch).eq('user_id', uid).eq('version', version).select('version');
+        if (error) throw new Error(errOf(error));
+        if (!rows || !rows.length) return { conflict: true };
+        return { version: rows[0].version };
+      },
+      async dataVersion(uid) { const { data, error } = await sb.from('user_data').select('version').eq('user_id', uid).maybeSingle(); if (error) throw new Error(errOf(error)); return data ? data.version : null; },
+      // Live sync between devices: a tiny "I saved" ping over Supabase Realtime. No progress data travels on it; the device
+      // that hears it re-reads its own row (which row-level security protects) and merges.
+      subscribe(uid, onChange) {
+        try { syncChannel = sb.channel(`sync:${uid}`, { config: { broadcast: { self: false } } }).on('broadcast', { event: 'changed' }, (m) => onChange(m.payload || {})).subscribe(); }
+        catch (e) { console.warn('live sync unavailable; falling back to periodic refresh', e); syncChannel = null; }
+        return () => { if (syncChannel) { try { sb.removeChannel(syncChannel); } catch {} syncChannel = null; } };
+      },
+      async signal(payload) { if (!syncChannel) return; try { await syncChannel.send({ type: 'broadcast', event: 'changed', payload: payload || {} }); } catch (e) { console.warn('sync signal', e); } },
       async saveProfile(uid, profile) { const { error } = await sb.from('profiles').update(profileToRow(profile)).eq('id', uid); if (error) throw new Error(errOf(error)); },
       async savePublic(uid, stats) { const { error } = await sb.from('public_stats').upsert({ user_id: uid, ...stats, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }); if (error) console.warn('public stats', error.message); },
       async profilesOf(ids) { if (!ids.length) return []; const { data } = await sb.from('public_stats').select('*').in('user_id', ids); return (data || []).map(r => ({ id: r.user_id, displayName: r.display_name, username: r.username, targetTest: r.test, stats: r })); },
@@ -85,7 +109,8 @@ window.AscendStore = (function () {
       async signOut() { LS.removeItem(key('session')); }, async signOutAll() { LS.removeItem(key('session')); },
       async changePassword(p) { const id = read('session'); const u = users(); const name = Object.keys(u).find(k => u[k].id === id); if (!name) return; u[name].salt = genCode(); u[name].hash = await hash(p, u[name].salt); write('users', u); },
       async loadUser(uid) { const prof = read(`profile:${uid}`); if (!prof) throw new Error('Profile not found'); const data = { ...emptyData(), ...read(`data:${uid}`, {}) }; const mocks = read(`mocks:${uid}`, []); return { profile: profileFromRow(prof), data, mocksIndex: mocks.map(m => ({ id: m.id, test: m.test, variant: m.variant, tier: m.tier, length: m.length, status: m.status, section_index: m.section_index, started_at: m.started_at, completed_at: m.completed_at, results: m.results ? { pct: m.results.pct, percentile: m.results.percentile, totalRight: m.results.totalRight, totalCount: m.results.totalCount, sections: m.results.sections.map(s => ({ label: s.label, pct: s.pct, percentile: s.percentile, right: s.right, count: s.count, writing: s.writing })) } : null })).sort((a, b) => b.started_at.localeCompare(a.started_at)), writings: read(`writings:${uid}`, []), friends: read(`friends:${uid}`, []), students: read(`students:${uid}`, []), viewers: [] }; },
-      async saveData(uid, data) { write(`data:${uid}`, data); },
+      async saveData(uid, data) { write(`data:${uid}`, data); return { version: 0 }; },
+      async dataVersion() { return null; }, subscribe() { return () => {}; }, async signal() {},
       async saveProfile(uid, profile) { const row = read(`profile:${uid}`); write(`profile:${uid}`, { ...row, ...profileToRow(profile) }); },
       async savePublic(uid, stats) { write(`public:${uid}`, stats); },
       async profilesOf(ids) { return ids.map(id => { const p = read(`profile:${id}`); const s = read(`public:${id}`, null); return p ? { id, displayName: p.display_name, username: p.username, targetTest: p.target_test, stats: s } : null; }).filter(Boolean); },

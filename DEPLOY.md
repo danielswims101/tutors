@@ -1,4 +1,4 @@
-# How Ascend Prep is hosted (free)
+# How Tidelyne Prep is hosted (free)
 
 The site is a static web app on **GitHub Pages**, with accounts and progress stored in **Supabase** (free plan). No server to run, nothing to pay.
 

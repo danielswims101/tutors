@@ -1,4 +1,4 @@
-// Ascend Prep service worker: app shell works offline, API always goes to the network.
+// Tidelyne Prep service worker: app shell works offline, API always goes to the network.
 const VERSION = 'v4';
 const SHELL = `ascend-shell-${VERSION}`;
 const ASSETS = ['/', '/index.html', `/app.js?v=${VERSION}`, `/styles.css?v=${VERSION}`, '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];

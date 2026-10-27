@@ -1,5 +1,5 @@
 {
-  "name": "ascend-prep",
+  "name": "tidelyne-prep",
   "version": "2.0.0",
   "description": "Adaptive HSPT, SSAT and ISEE tutor with a live AI coach",
   "main": "server.js",

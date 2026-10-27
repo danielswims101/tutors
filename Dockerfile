@@ -1,4 +1,4 @@
-# Ascend Prep — production image
+# Tidelyne Prep — production image
 FROM node:22-alpine
 ENV NODE_ENV=production
 WORKDIR /app

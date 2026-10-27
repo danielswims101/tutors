@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installs Ascend Prep as a background service on this Mac (starts at login, restarts if it crashes).
+# Installs Tidelyne Prep as a background service on this Mac (starts at login, restarts if it crashes).
 # Usage: bash scripts/mac-service.sh install | uninstall | status | logs
 set -e
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,7 +26,7 @@ PL
     launchctl unload "$PLIST" 2>/dev/null || true
     launchctl load "$PLIST"
     sleep 1.5
-    if curl -sf http://localhost:3000/api/health >/dev/null; then echo "Ascend Prep is running at http://localhost:3000, starts at every login, and keeps the Mac from idle-sleeping while it runs (closing the lid still sleeps it)."; else echo "Service installed but not responding yet; check: bash scripts/mac-service.sh logs"; fi ;;
+    if curl -sf http://localhost:3000/api/health >/dev/null; then echo "Tidelyne Prep is running at http://localhost:3000, starts at every login, and keeps the Mac from idle-sleeping while it runs (closing the lid still sleeps it)."; else echo "Service installed but not responding yet; check: bash scripts/mac-service.sh logs"; fi ;;
   uninstall) launchctl unload "$PLIST" 2>/dev/null || true; rm -f "$PLIST"; echo "Removed." ;;
   status) launchctl list | grep ascendprep || echo "not running"; curl -s http://localhost:3000/api/health; echo ;;
   logs) tail -n 50 "$LOG" ;;

@@ -1,5 +1,5 @@
 'use strict';
-// Ascend Prep server: zero-dependency Node HTTP server with cookie sessions, JSON API, static files.
+// Tidelyne Prep server: zero-dependency Node HTTP server with cookie sessions, JSON API, static files.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -407,4 +407,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { console.log(`${sig} received, shutting down`); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 3000); });
-server.listen(PORT, HOST, () => { console.log(`Ascend Prep running at http://localhost:${PORT}  (content: ${C.questions.length} questions, ${C.passages.length} passages, ${C.lessons.length} lessons, ${C.vocab.length} vocab words)`); });
+server.listen(PORT, HOST, () => { console.log(`Tidelyne Prep running at http://localhost:${PORT}  (content: ${C.questions.length} questions, ${C.passages.length} passages, ${C.lessons.length} lessons, ${C.vocab.length} vocab words)`); });

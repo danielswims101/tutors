@@ -1,6 +1,6 @@
-# Ascend Prep — a personal tutor for the HSPT, SSAT and ISEE
+# Tidelyne Prep — a personal tutor for the HSPT, SSAT and ISEE
 
-Not a question bank: a tutor. Ascend Prep diagnoses each student, writes a day-by-day study plan to test day, guides every session, gives hints that do not spoil, explains every miss, and brings mistakes back before they are forgotten. Many students can use one site at once; every account's progress is private.
+Not a question bank: a tutor. Tidelyne Prep diagnoses each student, writes a 7-day sprint to the 99th percentile and then the next one from its results, guides every session, gives hints that do not spoil, explains every miss, and brings mistakes back before they are forgotten. Many students can use one site at once; every account's progress is private.
 
 ## Use it
 
@@ -25,13 +25,13 @@ With an Anthropic API key the tutor becomes a live coach that answers anything i
 
 ## Use it as an app, on every device
 
-Ascend Prep is an installable web app. On a phone, tablet or computer, open the site and choose **Install app** (on iPhone: Safari → Share → Add to Home Screen). It opens full-screen with its own icon. Sign in with the same username and password on any device; plan, progress, streak and tutor chat live in the account, not on the device. Settings shows how many devices are signed in and can sign out everywhere.
+Tidelyne Prep is an installable web app. On a phone, tablet or computer, open the site and choose **Install app** (on iPhone: Safari → Share → Add to Home Screen). It opens full-screen with its own icon. One account works on every device at the same time: every save is versioned, devices merge instead of overwriting each other, and progress made on one device shows up on the others within seconds (or the moment the app is reopened). Sign in with the same username and password on any device; plan, progress, streak and tutor chat live in the account, not on the device. Settings shows how many devices are signed in and can sign out everywhere.
 
 ## Built for the 99th percentile
 
 Every student's default goal is the 99th percentile, and the site is organized around closing that gap:
 
-- **Diagnostic that re-tailors everything.** Twenty questions per course set the study plan (three phases), the three focus skills with two-week targets, drill difficulty per skill, the vocabulary level, the daily goal, and the recommended mock tier.
+- **Diagnostic that re-tailors everything.** Twenty questions per course set the sprint plan (five phases), the three focus skills with one-week targets, drill difficulty per skill, the vocabulary level, the daily goal, and the recommended mock tier.
 - **Road to the 99th.** A live projection per section from skill ratings, the gap to the goal, and the weakest skill holding each section back. The 99th corresponds to about 79% accuracy on Elite-level questions.
 - **Several courses at once.** Enroll in the HSPT, SSAT and ISEE together; each has its own diagnostic, plan, focus skills and ratings. Switch from the sidebar.
 - **Mistake journal.** Tag each miss (careless, didn't know, misread, out of time) and see where points leak, by cause and by skill, with the fix for each.
@@ -46,9 +46,9 @@ Every student's default goal is the 99th percentile, and the site is organized a
 
 | | |
 |---|---|
-| **Today** | A guided daily session: review, a lesson, a drill, vocabulary, a weekly mock, narrated by the tutor from the plan. |
+| **Today** | A guided daily session narrated by the tutor from the sprint: review, a mini test at real pace, a lesson, drills, vocabulary; a checkpoint mock on day 4 and a full-length Elite mock on day 7. |
 | **Diagnostic** | Twenty questions across every section calibrate a rating per skill before the plan is built. |
-| **Study plan** | Day-by-day to the test date (or six weeks by default): weakest skills first, weekly mocks, taper before test day. Rebuilds on demand. |
+| **Study plan** | A 7-day sprint to the 99th percentile: Baseline, Attack, Checkpoint (half-length mock), Elite, Prove it (full-length Elite mock). About 90 minutes planned a day with 60 enforced; the next sprint is written from the results. The last week before a dated test tapers instead. Rebuilds on demand. |
 | **Lessons** | Forty-six: concept, method, worked think-aloud, scaffolded try, traps, retrieval check. |
 | **Practice** | Adaptive sets with Elo-style skill ratings (about 70% success), a three-level hint ladder, confidence ratings, and "ask why" on every question. |
 | **Mock tests** | Audited against the test makers' published specs: official section order, counts and timing for HSPT, SSAT (Elementary/Middle/Upper) and ISEE (Lower/Middle/Upper); scheduled breaks; the SSAT experimental section and choice of two writing prompts; per-level rules (SSAT Elementary: 4 choices, no penalty, 7 passages × 4 questions, picture-prompt writing sample; SSAT Middle/Upper: every reading question carries 5 choices); HSPT question-type mixes from the STS Interpretive Manual; ISEE comparisons last and 5×5 / 6×6 passage structure; difficulty centered on each level; four tiers; full, half, single-section and 20-minute mini formats; a test-day mode with no palette, no countdown and no early submit; results with estimated percentiles and stanines. |

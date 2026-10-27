@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-shot setup for a fresh Ubuntu server (Oracle Cloud Always Free, or any VPS).
-# Installs Node 22, Ascend Prep as a systemd service, and Caddy for automatic HTTPS.
+# Installs Node 22, Tidelyne Prep as a systemd service, and Caddy for automatic HTTPS.
 # Usage (on the server):  curl -fsSL https://raw.githubusercontent.com/danielswims101/tutors/main/scripts/vps-setup.sh | sudo bash
 set -euo pipefail
 REPO="https://github.com/danielswims101/tutors.git"
@@ -11,14 +11,14 @@ if ! command -v node >/dev/null || [ "$(node -v | cut -c2-3)" -lt 22 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs git
 fi
-echo "==> Fetching Ascend Prep"
+echo "==> Fetching Tidelyne Prep"
 if [ -d "$APP_DIR/.git" ]; then git -C "$APP_DIR" pull -q; else git clone -q "$REPO" "$APP_DIR"; fi
 cd "$APP_DIR" && npm install --omit=dev --no-audit --no-fund
 mkdir -p "$DATA_DIR"
 echo "==> Creating the service"
 cat > /etc/systemd/system/ascend.service <<UNIT
 [Unit]
-Description=Ascend Prep tutor
+Description=Tidelyne Prep tutor
 After=network.target
 [Service]
 WorkingDirectory=$APP_DIR
@@ -56,6 +56,6 @@ if command -v iptables >/dev/null; then
   command -v netfilter-persistent >/dev/null && netfilter-persistent save >/dev/null 2>&1 || true
 fi
 echo
-echo "==> Done. Ascend Prep is at: https://$HOSTNAME_FOR_TLS"
+echo "==> Done. Tidelyne Prep is at: https://$HOSTNAME_FOR_TLS"
 echo "    (If the cloud firewall also blocks 80/443, allow them in the Oracle console: Networking > Virtual Cloud Networks > Security Lists.)"
 echo "    Update later with: sudo bash $APP_DIR/scripts/vps-setup.sh"
