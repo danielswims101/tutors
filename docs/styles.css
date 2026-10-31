@@ -396,3 +396,21 @@ body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-ins
   .item:has(> .btn + .btn) > .grow { flex-basis: 100%; }
 }
 @media (max-width: 360px) { .g4:not(:has(> .stat)) { grid-template-columns: 1fr; } }
+
+/* ---- fourth pass ---- */
+.mock-grid .q-stem { scroll-margin-top: 110px; }
+@media (max-width: 600px) {
+  .plan-day .its { min-width: 0; }
+  .plan-day .its .pill { white-space: normal; max-width: 100%; }        /* long lesson names wrap instead of running off the card */
+}
+
+/* ---- fifth pass ---- */
+.plan-day .its { min-width: 0; }
+.plan-day .its .pill { white-space: normal; max-width: 100%; }
+@media (max-width: 600px) { .plan-day { flex-direction: column; gap: 6px; } .plan-day .dt { width: auto; } }   /* date above its pills: the pills get the full width */
+/* phones held sideways: reading passage and question side by side, the passage pinned while the question scrolls */
+@media (max-width: 1000px) and (min-width: 640px) and (orientation: landscape) {
+  .split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .split > .passage { position: sticky; top: 8px; max-height: calc(100vh - 120px); max-height: calc(100dvh - 120px); }
+  .mock-grid .split > .passage { top: 76px; max-height: calc(100vh - 170px); max-height: calc(100dvh - 170px); }
+}
