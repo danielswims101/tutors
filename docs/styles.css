@@ -222,16 +222,18 @@ body.no-coach .tutor-fab, body.no-coach .nav-coach { display: none !important; }
   .mock-grid { grid-template-columns: minmax(0, 1fr); }      /* question first, the question grid below it */
   .sticky-side { position: static; }
   .row > div { min-width: 0; }
+  .btn { white-space: normal; text-align: center; max-width: 100%; }
   .tutor-fab { display: none; }                              /* the coach is in the bottom bar on phones */
   .bottom-nav .nav-coach { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; font-weight: 600; color: var(--muted); background: none; border: 0; padding: 4px 0; }
   .bottom-nav .nav-av { width: 22px; height: 22px; border-radius: 50%; background: linear-gradient(135deg, var(--gold), var(--accent-2)); display: grid; place-items: center; font-size: 12px; line-height: 1; }
   .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .auth-wrap { align-content: start; }
   .badge-pop { top: calc(12px + env(safe-area-inset-top)); right: 12px; left: 12px; }
   .auth-art { padding-top: calc(32px + env(safe-area-inset-top)); }
 }
 
 @media (max-width: 600px) {
-  .main { padding: 14px 14px 104px; }
+  .main { padding: calc(14px + env(safe-area-inset-top)) 14px calc(104px + env(safe-area-inset-bottom)); }
   h1 { font-size: 25px; }
   h2 { font-size: 21px; }
   .page-head { margin-bottom: 14px; gap: 10px; }
@@ -239,7 +241,6 @@ body.no-coach .tutor-fab, body.no-coach .nav-coach { display: none !important; }
   .card { padding: 16px; }
   .card.tight { padding: 12px 14px; }
   .lesson-block { padding: 16px; }
-  .btn { white-space: normal; text-align: center; max-width: 100%; }
   .btn-lg { padding: 13px 18px; }
   .stat .v { font-size: 24px; }
   .tutor-say { padding: 14px; gap: 10px; border-radius: 18px; }
@@ -303,13 +304,14 @@ body.no-coach .tutor-fab, body.no-coach .nav-coach { display: none !important; }
   .cta-band { border-radius: 20px; }
   .foot { padding: 24px 16px 40px; }
   .auth-art { padding-left: 20px; padding-right: 20px; padding-bottom: 24px; }
-  .auth-art h2 { font-size: 28px; }
-  .auth-art .q { font-size: 16.5px; }
+  .auth-art h2 { font-size: 24px; margin: 12px 0 0; }
+  .auth-art { gap: 10px; }
+  .auth-art .q, .auth-art > .small { display: none; }   /* sign-in fields start near the top of the screen */
   .auth-form { padding: 22px 16px 48px; }
 }
 @media (max-width: 480px) { .land-nav .btn-primary { display: none; } }   /* the hero right below has the same call to action */
 @media (max-width: 360px) {
-  .main { padding: 12px 12px 100px; }
+  .main { padding: calc(12px + env(safe-area-inset-top)) 12px calc(100px + env(safe-area-inset-bottom)); }
   h1 { font-size: 23px; }
   .card { padding: 14px; }
   .bottom-nav a, .bottom-nav .nav-coach { font-size: 10px; }
@@ -319,3 +321,78 @@ body.no-coach .tutor-fab, body.no-coach .nav-coach { display: none !important; }
   table.tbl { font-size: 12.5px; }
   .tbl th, .tbl td { padding-left: 4px; padding-right: 4px; }
 }
+
+/* ---- second pass: touch, notch, keyboard ---- */
+.toast { width: max-content; max-width: min(560px, calc(100vw - 32px)); text-align: center; }   /* left:50% had capped toasts at half the screen */
+.tutor-say .btn { white-space: normal; text-align: left; }       /* coach suggestions carry long lesson titles */
+.page-head > div:first-child { min-width: 0; }
+.page-head h1 { overflow-wrap: anywhere; }                        /* a one-word deck name cannot push the title off the screen */
+.scrim.show { overflow-y: auto; overscroll-behavior: contain; padding: 0 0 max(16px, env(safe-area-inset-bottom)); }   /* tall dialogs scroll on short screens */
+.side { overflow-y: auto; overscroll-behavior: contain; height: 100vh; height: 100dvh; }   /* landscape phones above 900px wide are shorter than the sidebar */
+.choice { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }      /* press and hold crosses a choice out */
+.tutor-msgs { overscroll-behavior: contain; }
+html.tutor-open { overflow: hidden; }                              /* the page behind the open coach panel does not scroll */
+/* landscape on notched iPhones: keep content clear of the sensor housing and rounded corners */
+body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.bottom-nav { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.tutor-panel { padding-right: env(safe-area-inset-right); }
+.tutor-fab { right: max(22px, env(safe-area-inset-right)); }
+/* installed app: the status bar is see-through, so give it a solid navy strip and keep sticky bars below it */
+@media (display-mode: standalone) {
+  body::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top); background: var(--navy); z-index: 90; pointer-events: none; }
+  .mock-bar { top: env(safe-area-inset-top); }
+  .side { padding-top: calc(18px + env(safe-area-inset-top)); }
+}
+/* touch screens: bigger tap targets, no keyboard-shortcut hints */
+@media (pointer: coarse) {
+  .btn-sm { min-height: 40px; min-width: 40px; }
+  .chip, .tutor-chips button { min-height: 40px; }
+  a.small { display: inline-block; padding: 10px 0; margin: -10px 0; }
+}
+@media (hover: none) and (pointer: coarse) { .kbd, .kbd-hint { display: none !important; } }
+@media (max-width: 900px) {
+  .tutor-head .s { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tutor-head .btn { min-width: 44px; min-height: 44px; }
+  .tutor-ctx { padding: 6px 16px; }
+  .tutor-ctx > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tutor-chips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
+  .tutor-chips button { flex: none; }
+}
+
+/* ---- third pass ---- */
+.flashcard .w { font-size: 36px; }
+.flashcard .w.long { font-size: 22px; }
+.flashcard > * { max-width: 100%; }
+.flashcard .def, .flashcard .serif, .flashcard .small { overflow-wrap: anywhere; }   /* a pasted link on a card back cannot run off the card */
+.lb { grid-template-columns: 36px minmax(0, 1fr) auto; }
+.lb .n { overflow-wrap: anywhere; }                                                 /* one long name no longer pushes the XP off the screen */
+.page-head > * { min-width: 0; max-width: 100%; }
+.mock-bar { flex-wrap: nowrap; }
+.mock-bar .mb-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mock-bar .mb-s, .mock-bar .mb-x, .mock-bar .timer { flex: none; }
+.mock-grid .sticky-side { top: 76px; }                                               /* clear the sticky test header */
+@container (max-width: 300px) { .hide-xs { display: none !important; } }
+/* the course toggle (sidebar on computers, top of More on phones) */
+.course-switch { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 6px 14px; }
+.course-switch .cs { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.07); color: #d5dbec; font-size: 12.5px; font-weight: 700; text-decoration: none; }
+.course-switch .cs.active { background: #00d4ff; border-color: #00d4ff; color: #081526; }
+.course-switch .cs .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); }
+.main .course-switch { margin: 0; }
+.main .course-switch .cs { border-color: var(--border-2); background: var(--surface-2); color: var(--ink-2); min-height: 40px; padding: 8px 14px; font-size: 14px; }
+.main .course-switch .cs.active { background: #00d4ff; border-color: #00d4ff; color: #081526; }
+/* iOS draws an empty date field shorter than the others */
+@supports (-webkit-touch-callout: none) { input[type="date"] { -webkit-appearance: none; appearance: none; min-height: 48px; } input[type="date"]::-webkit-date-and-time-value { text-align: left; } }
+@media (max-width: 1000px) { .split > .sticky-side { position: static; } }          /* the reading passage stops pinning once it stacks above the questions */
+@media (max-width: 900px) {
+  html { scroll-padding-bottom: calc(80px + env(safe-area-inset-bottom)); }         /* focusing a button never leaves it under the bottom bar */
+}
+@media (max-width: 600px) {
+  .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }              /* stat tiles two by two instead of one tall column */
+  .grade-bar:not(.hidden) { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .grade-bar .btn { padding: 10px 4px; }
+  .flashcard .w { font-size: 30px; }
+  .flashcard .w.long { font-size: 20px; }
+  .item:has(> .btn + .btn) { flex-wrap: wrap; }
+  .item:has(> .btn + .btn) > .grow { flex-basis: 100%; }
+}
+@media (max-width: 360px) { .g4:not(:has(> .stat)) { grid-template-columns: 1fr; } }
