@@ -164,7 +164,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 14px; } .tbl th {
 
 /* ---- landing ---- */
 .land { background: var(--bg); }
-.land-nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(12px); background: color-mix(in srgb, var(--bg) 80%, transparent); border-bottom: 1px solid var(--border); }
+.land-nav { position: sticky; top: 0; z-index: 20; -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); background: var(--bg); background: color-mix(in srgb, var(--bg) 80%, transparent); border-bottom: 1px solid var(--border); }
 .land-nav .in { max-width: 1140px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; gap: 18px; }
 .land-nav .links { display: flex; gap: 4px; margin-left: 10px; } .land-nav .links a { padding: 7px 11px; border-radius: 9px; color: var(--ink-2); font-weight: 600; font-size: 14px; } .land-nav .links a:hover { background: var(--surface-2); text-decoration: none; }
 .brand-lite { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 600; font-size: 21px; color: var(--ink); text-decoration: none !important; }
@@ -279,7 +279,6 @@ body.no-coach .tutor-fab, body.no-coach .nav-coach { display: none !important; }
   .flashcard .w { font-size: 30px; overflow-wrap: anywhere; }
   .flashcard .def { font-size: 16.5px; }
   .editor { min-height: 260px; font-size: 16.5px; }
-  .plan-day .dt { width: 64px; }
   .lb { padding: 10px 8px; }
   .lb .pills { padding-left: 0; }
   .badge-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
@@ -399,10 +398,6 @@ body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-ins
 
 /* ---- fourth pass ---- */
 .mock-grid .q-stem { scroll-margin-top: 110px; }
-@media (max-width: 600px) {
-  .plan-day .its { min-width: 0; }
-  .plan-day .its .pill { white-space: normal; max-width: 100%; }        /* long lesson names wrap instead of running off the card */
-}
 
 /* ---- fifth pass ---- */
 .plan-day .its { min-width: 0; }
@@ -413,4 +408,26 @@ body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-ins
   .split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .split > .passage { position: sticky; top: 8px; max-height: calc(100vh - 120px); max-height: calc(100dvh - 120px); }
   .mock-grid .split > .passage { top: 76px; max-height: calc(100vh - 170px); max-height: calc(100dvh - 170px); }
+}
+
+/* ---- sixth pass ---- */
+.row > b { min-width: 0; overflow-wrap: anywhere; }                     /* one-word deck names wrap inside their card */
+@supports not (overflow: clip) { .orb { animation: none; } .hero { overflow: hidden; } }   /* Safari 15: keep the glow from widening the page */
+@container (max-width: 440px) { .tbl th { padding: 8px 4px; } .tbl td { padding: 9px 4px; } }
+@media (max-width: 600px) {
+  .tbl th { padding: 8px 4px; }
+  .tbl td { padding: 9px 4px; }
+  .md td, .md th { padding: 4px 6px; font-size: 13px; }
+  .md th { font-size: 12px; }
+  /* test header: the title spans two columns so long section names fit */
+  .mock-bar:has(> .mb-t) { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "t t clock" "s x x"; }
+  .tabs { flex-wrap: wrap; overflow-x: visible; }                        /* every review tab visible, no hidden sideways strip */
+  .tabs button { padding: 8px 10px; }
+  .badge-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .skill-row.ladder > :nth-child(4) { flex-wrap: nowrap; }
+}
+@media (max-width: 360px) {
+  .md td, .md th { overflow-wrap: anywhere; -webkit-hyphens: auto; hyphens: auto; }
+  .mock-bar .mb-t { white-space: normal; }
+  .stats-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
